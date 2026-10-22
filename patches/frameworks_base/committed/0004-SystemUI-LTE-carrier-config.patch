@@ -1,0 +1,98 @@
+From 7640c50752c66f4337af69b111717a33c79b8b3e Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 10 Sep 2026 20:54:56 +0800
+Subject: [PATCH 4/6] =?UTF-8?q?SystemUI:=20LTE=20=E5=AD=97=E6=A0=B7?=
+ =?UTF-8?q?=E5=A2=9E=E5=8A=A0=20carrier=20config=20/=20=E8=AE=A2=E9=98=85?=
+ =?UTF-8?q?=E5=8F=98=E5=8C=96=E8=A7=A6=E5=8F=91=EF=BC=8C=E4=BF=AE=E5=BC=80?=
+ =?UTF-8?q?=E6=9C=BA=E5=90=8E=E4=B8=8D=E6=98=BE=E7=A4=BA?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change-Id: I18884050b12636beef00242806a810bc2d41fa7c
+---
+ .../ui/view/ModernStatusBarMobileView.kt      | 38 +++++++++++++++++++
+ 1 file changed, 38 insertions(+)
+
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/view/ModernStatusBarMobileView.kt b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/view/ModernStatusBarMobileView.kt
+index e6bec1926..f5c20ebd7 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/view/ModernStatusBarMobileView.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/view/ModernStatusBarMobileView.kt
+@@ -16,10 +16,14 @@
+ 
+ package com.android.systemui.statusbar.pipeline.mobile.ui.view
+ 
++import android.content.BroadcastReceiver
+ import android.content.Context
++import android.content.Intent
++import android.content.IntentFilter
+ import android.database.ContentObserver
+ import android.os.Handler
+ import android.os.Looper
++import android.telephony.CarrierConfigManager
+ import android.telephony.SubscriptionManager
+ import android.telephony.ims.ImsMmTelManager
+ import android.util.AttributeSet
+@@ -64,6 +68,23 @@ class ModernStatusBarMobileView(
+             }
+         }
+ 
++    // carrier config 加载完之前 isAdvancedCallingSettingEnabled() 会返回 false，
++    // 所以必须等这个广播再读一次，否则开机那次读到的 false 会一直留着。
++    private val volteConfigReceiver =
++        object : BroadcastReceiver() {
++            override fun onReceive(context: Context?, intent: Intent?) {
++                refreshVolte()
++            }
++        }
++
++    // 换卡 / 默认语音卡变化时也要重读
++    private val volteSubsListener =
++        object : SubscriptionManager.OnSubscriptionsChangedListener() {
++            override fun onSubscriptionsChanged() {
++                refreshVolte()
++            }
++        }
++
+     private fun refreshVolte() {
+         val sub = subId
+         volteBgExecutor.execute {
+@@ -77,6 +98,7 @@ class ModernStatusBarMobileView(
+                     Log.w(TAG, "读取 4G 高清通话开关失败 subId=$sub", e)
+                     false
+                 }
++            Log.d(TAG, "4G 高清通话开关 subId=$sub enabled=$enabled")
+             post {
+                 findViewById<ImageView>(R.id.mobile_volte)?.visibility =
+                     if (enabled) View.VISIBLE else View.GONE
+@@ -91,11 +113,27 @@ class ModernStatusBarMobileView(
+             /* notifyForDescendants = */ true,
+             volteObserver,
+         )
++        context.registerReceiver(
++            volteConfigReceiver,
++            IntentFilter(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED),
++            Context.RECEIVER_NOT_EXPORTED,
++        )
++        context
++            .getSystemService(SubscriptionManager::class.java)
++            ?.addOnSubscriptionsChangedListener(volteBgExecutor, volteSubsListener)
+         refreshVolte()
+     }
+ 
+     override fun onDetachedFromWindow() {
+         context.contentResolver.unregisterContentObserver(volteObserver)
++        try {
++            context.unregisterReceiver(volteConfigReceiver)
++        } catch (e: IllegalArgumentException) {
++            // 没注册上过，忽略
++        }
++        context
++            .getSystemService(SubscriptionManager::class.java)
++            ?.removeOnSubscriptionsChangedListener(volteSubsListener)
+         super.onDetachedFromWindow()
+     }
+ 
+-- 
+2.43.0
+

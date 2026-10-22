@@ -1,0 +1,1840 @@
+diff --git a/core/java/android/app/Instrumentation.java b/core/java/android/app/Instrumentation.java
+index 7eacaac29..d19549d83 100644
+--- a/core/java/android/app/Instrumentation.java
++++ b/core/java/android/app/Instrumentation.java
+@@ -65,6 +65,7 @@ import android.view.Window;
+ import android.view.WindowManagerGlobal;
+ 
+ import com.android.internal.content.ReferrerIntent;
++import com.android.internal.util.xz1c.PropImitationHooks;
+ 
+ import java.io.File;
+ import java.lang.annotation.Retention;
+@@ -1355,6 +1356,7 @@ public class Instrumentation {
+             ClassNotFoundException {
+         Application app = getFactory(context.getPackageName())
+                 .instantiateApplication(cl, className);
++        PropImitationHooks.setProps(context);
+         app.attach(context);
+         return app;
+     }
+@@ -1372,6 +1374,7 @@ public class Instrumentation {
+             throws InstantiationException, IllegalAccessException, 
+             ClassNotFoundException {
+         Application app = (Application)clazz.newInstance();
++        PropImitationHooks.setProps(context);
+         app.attach(context);
+         return app;
+     }
+diff --git a/core/java/com/android/internal/view/FloatingActionMode.java b/core/java/com/android/internal/view/FloatingActionMode.java
+index fd435d059..ffd675e77 100644
+--- a/core/java/com/android/internal/view/FloatingActionMode.java
++++ b/core/java/com/android/internal/view/FloatingActionMode.java
+@@ -142,9 +142,135 @@ public final class FloatingActionMode extends ActionMode {
+     @Override
+     public void invalidate() {
+         mCallback.onPrepareActionMode(this, mMenu);
++        xz1cAddTextTools();
+         invalidateContentRect();  // Will re-layout and show the toolbar if necessary.
+     }
+ 
++    // ---------------------------------------------------------------------------------------
++    // xz1c: system-wide "Translate" and "Big Bang" next to Copy in every text selection toolbar
++    // (views, Jetpack Compose, WebView alike). Tapping one runs the app's own Copy, then hands
++    // the clipboard to com.xz1c.bigbang. Password fields offer no Copy, so they get nothing.
++    private static final String XZ1C_PKG = "com.xz1c.bigbang";
++    private static final int XZ1C_TRANSLATE_ID = 0x5a1c0001;
++    private static final int XZ1C_BIGBANG_ID = 0x5a1c0002;
++    private static Boolean sXz1cInstalled;
++    private static Boolean sXz1cBigBang;
++
++    private void xz1cAddTextTools() {
++        try {
++            if (mMenu.findItem(XZ1C_TRANSLATE_ID) != null) return;
++            final MenuItem copy = xz1cFindCopy();
++            if (copy == null || !copy.isVisible() || !copy.isEnabled()) return;
++            if (!xz1cInstalled()) return;
++            if (XZ1C_PKG.equals(mContext.getPackageName())) return;
++            String lang = mContext.getResources().getConfiguration().getLocales().get(0)
++                    .toLanguageTag();
++            boolean zh = lang.startsWith("zh");
++            boolean hant = zh && (lang.contains("Hant") || lang.contains("TW")
++                    || lang.contains("HK") || lang.contains("MO"));
++            int order = copy.getOrder();
++            // SHOW_AS_ACTION_ALWAYS: the toolbar sorts such items first, so Translate stays in
++            // the visible row even when an app puts its own items ahead of Copy (ChatGPT)
++            mMenu.add(Menu.NONE, XZ1C_TRANSLATE_ID, order,
++                            zh ? (hant ? "\u7ffb\u8b6f" : "\u7ffb\u8bd1") : "Translate")
++                    .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_ALWAYS)
++                    .setOnMenuItemClickListener(i -> xz1cLaunch(copy, "translate"));
++            if (xz1cBigBangEnabled()) {
++                mMenu.add(Menu.NONE, XZ1C_BIGBANG_ID, order,
++                                zh ? "\u5927\u7206\u70b8" : "Big Bang")
++                        .setOnMenuItemClickListener(i -> xz1cLaunch(copy, "bigbang"));
++            }
++        } catch (Throwable t) {
++            // never break an app's text selection over an optional extra
++        }
++    }
++
++    private MenuItem xz1cFindCopy() {
++        MenuItem copy = mMenu.findItem(android.R.id.copy);
++        if (copy != null) return copy;
++        // Compose and WebView use their own ids; match the Copy title instead
++        String[] titles = { mContext.getString(android.R.string.copy), "Copy",
++                "\u590d\u5236", "\u8907\u88fd" };
++        for (int i = 0; i < mMenu.size(); i++) {
++            MenuItem item = mMenu.getItem(i);
++            CharSequence t = item.getTitle();
++            if (t == null) continue;
++            for (String title : titles) {
++                if (title.equalsIgnoreCase(t.toString().trim())) return item;
++            }
++        }
++        return null;
++    }
++
++    /** Big Bang can be switched off in the app (its activity disabled); cached per process. */
++    private boolean xz1cBigBangEnabled() {
++        if (sXz1cBigBang == null) {
++            try {
++                sXz1cBigBang = !mContext.getPackageManager().queryIntentActivities(
++                        new android.content.Intent("com.xz1c.bigbang.action.BIGBANG_CLIPBOARD")
++                                .setPackage(XZ1C_PKG), 0).isEmpty();
++            } catch (Exception e) {
++                sXz1cBigBang = false;
++            }
++        }
++        return sXz1cBigBang;
++    }
++
++    private boolean xz1cInstalled() {
++        if (sXz1cInstalled == null) {
++            try {
++                mContext.getPackageManager().getPackageInfo(XZ1C_PKG, 0);
++                sXz1cInstalled = true;
++            } catch (Exception e) {
++                sXz1cInstalled = false;
++            }
++        }
++        return sXz1cInstalled;
++    }
++
++    private boolean xz1cLaunch(MenuItem copy, String mode) {
++        final Context app = mContext.getApplicationContext();
++        // Tell SystemUI this copy is ours, so it does not pop up the clipboard preview
++        // (it honours it for this package within two seconds). Copy only once SystemUI has
++        // taken the note: a short word copies faster than a plain broadcast is delivered.
++        final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
++        final boolean[] copied = { false };
++        final Runnable copyThenOpen = () -> {
++            if (copied[0]) return;
++            copied[0] = true;
++            mMenu.performItemAction(copy, 0); // the app copies its own selection
++            xz1cOpen(app, mode, main);
++        };
++        try {
++            android.app.BroadcastOptions opts = android.app.BroadcastOptions.makeBasic();
++            opts.setShareIdentityEnabled(true);
++            app.sendOrderedBroadcast(new android.content.Intent("com.xz1c.SUPPRESS_CLIP_OVERLAY")
++                    .setPackage("com.android.systemui"), null, opts.toBundle(),
++                    new android.content.BroadcastReceiver() {
++                        @Override
++                        public void onReceive(Context c, android.content.Intent i) {
++                            copyThenOpen.run();
++                        }
++                    }, main, 0, null, null);
++        } catch (Throwable ignored) {
++        }
++        main.postDelayed(copyThenOpen, 400); // SystemUI busy or gone: copy anyway
++        return true;
++    }
++
++    private void xz1cOpen(Context app, String mode, android.os.Handler main) {
++        main.postDelayed(() -> {
++            try {
++                app.startActivity(new android.content.Intent("bigbang".equals(mode)
++                        ? "com.xz1c.bigbang.action.BIGBANG_CLIPBOARD"
++                        : "com.xz1c.bigbang.action.TRANSLATE_CLIPBOARD")
++                        .setPackage(XZ1C_PKG)
++                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
++            } catch (Throwable ignored) {
++            }
++        }, 120);
++    }
++
+     @Override
+     public void invalidateContentRect() {
+         mCallback.onGetContentRect(this, mOriginatingView, mContentRect);
+diff --git a/keystore/java/android/security/keystore2/AndroidKeyStoreSpi.java b/keystore/java/android/security/keystore2/AndroidKeyStoreSpi.java
+index e6a63b9c4..2d7a1fd39 100644
+--- a/keystore/java/android/security/keystore2/AndroidKeyStoreSpi.java
++++ b/keystore/java/android/security/keystore2/AndroidKeyStoreSpi.java
+@@ -47,6 +47,8 @@ import android.system.keystore2.KeyMetadata;
+ import android.system.keystore2.ResponseCode;
+ import android.util.Log;
+ 
++import com.android.internal.util.xz1c.PropImitationHooks;
++
+ import com.android.internal.annotations.VisibleForTesting;
+ 
+ import java.io.ByteArrayInputStream;
+@@ -178,6 +180,7 @@ public class AndroidKeyStoreSpi extends KeyStoreSpi {
+ 
+     @Override
+     public Certificate[] engineGetCertificateChain(String alias) {
++        PropImitationHooks.onEngineGetCertificateChain();
+         KeyEntryResponse response = getKeyMetadata(alias);
+ 
+         if (response == null || response.metadata.certificate == null) {
+diff --git a/libs/hwui/Properties.cpp b/libs/hwui/Properties.cpp
+index 064cac2a6..0cb7734b9 100644
+--- a/libs/hwui/Properties.cpp
++++ b/libs/hwui/Properties.cpp
+@@ -244,6 +244,12 @@ RenderPipelineType Properties::peekRenderPipelineType() {
+     }
+     bool useVulkan = use_vulkan().value_or(false);
+     std::string rendererProperty = base::GetProperty(PROPERTY_RENDERER, useVulkan ? "skiavk" : "skiagl");
++#if defined(__ANDROID__) && !defined(__LP64__)
++    // Device-configurable 32-bit HWUI compatibility override. Keep the ordinary
++    // renderer selection for 64-bit apps and for devices without this property.
++    // Yoshino's 32-bit Vulkan path can expose zero physical devices on Android 15.
++    rendererProperty = base::GetProperty("debug.hwui.renderer_32bit", rendererProperty);
++#endif
+     if (rendererProperty == "skiavk") {
+         return RenderPipelineType::SkiaVulkan;
+     }
+diff --git a/media/java/android/media/MediaPlayer.java b/media/java/android/media/MediaPlayer.java
+index f1c2a7aec..3d0ee6ae8 100644
+--- a/media/java/android/media/MediaPlayer.java
++++ b/media/java/android/media/MediaPlayer.java
+@@ -2243,6 +2243,7 @@ public class MediaPlayer extends PlayerBase
+      * <p>You must call this method once the instance is no longer required.
+      */
+     public void release() {
++        clearDseeHxSession();
+         baseRelease();
+         stayAwake(false);
+         updateSurfaceScreenOn();
+@@ -2287,6 +2288,7 @@ public class MediaPlayer extends PlayerBase
+      * data source and calling prepare().
+      */
+     public void reset() {
++        clearDseeHxSession();
+         mSelectedSubtitleTrackIndex = -1;
+         synchronized(mOpenSubtitleSources) {
+             for (final InputStream is: mOpenSubtitleSources) {
+@@ -2358,6 +2360,55 @@ public class MediaPlayer extends PlayerBase
+ 
+     private native void _setAudioStreamType(int streamtype);
+ 
++    /**
++     * Sony compatibility API used by semc_audioeffectif.jar. The stock
++     * Xperia framework registered the MediaPlayer audio session with the
++     * Sony audio HAL before enabling DSEE HX. Keep this public because the
++     * Sony Music compatibility library resolves it with Class.getMethod().
++     *
++     * @hide
++     */
++    public void setDseeHxEnabled(boolean enabled) {
++        final int sessionId = getAudioSessionId();
++        if (sessionId <= 0) {
++            Log.w(TAG, "Ignoring DSEE HX request without a valid audio session");
++            return;
++        }
++
++        if (mDseeHxSessionId > 0 && mDseeHxSessionId != sessionId) {
++            AudioSystem.setParameters("s_e_client_session_id=" + mDseeHxSessionId
++                    + ";s_e_client_session_state=0");
++        }
++
++        AudioSystem.setParameters("s_e_client_session_id=" + sessionId
++                + ";s_e_client_session_state=" + (enabled ? 1 : 0));
++        AudioSystem.setParameters("dsee_hx_state=" + (enabled ? 1 : 0));
++        mDseeHxSessionId = enabled ? sessionId : 0;
++
++        // Sony's HAL runs DSEE HX only on a plain DIRECT PCM16 stream: have NuPlayer skip
++        // compress offload and open such a stream (NuPlayerDriver key 0x5A1C).
++        Parcel p = Parcel.obtain();
++        try {
++            p.writeInt(enabled ? 1 : 0);
++            setParameter(KEY_PARAMETER_XZ1C_DSEE, p);
++        } finally {
++            p.recycle();
++        }
++    }
++
++    // xz1c: keep in sync with NuPlayerDriver::setParameter
++    private static final int KEY_PARAMETER_XZ1C_DSEE = 0x5A1C;
++
++    private void clearDseeHxSession() {
++        if (mDseeHxSessionId > 0) {
++            AudioSystem.setParameters("s_e_client_session_id=" + mDseeHxSessionId
++                    + ";s_e_client_session_state=0");
++            mDseeHxSessionId = 0;
++        }
++    }
++
++    private int mDseeHxSessionId;
++
+     // Keep KEY_PARAMETER_* in sync with include/media/mediaplayer.h
+     private final static int KEY_PARAMETER_AUDIO_ATTRIBUTES = 1400;
+     /**
+diff --git a/packages/SettingsLib/src/com/android/settingslib/media/InfoMediaDevice.java b/packages/SettingsLib/src/com/android/settingslib/media/InfoMediaDevice.java
+index 21873ef3a..aefa49d61 100644
+--- a/packages/SettingsLib/src/com/android/settingslib/media/InfoMediaDevice.java
++++ b/packages/SettingsLib/src/com/android/settingslib/media/InfoMediaDevice.java
+@@ -76,6 +76,8 @@ public class InfoMediaDevice extends MediaDevice {
+     @VisibleForTesting
+     @SuppressWarnings("NewApi")
+     int getDrawableResIdByType() {
++        // XZ1C: AirPlay speakers (AirCast) show the AirPlay audio glyph
++        if (InfoMediaManager.isXz1cAirCastRoute(mRouteInfo)) return R.drawable.ic_media_airplay;
+         int resId;
+         switch (mRouteInfo.getType()) {
+             case TYPE_GROUP:
+diff --git a/packages/SettingsLib/src/com/android/settingslib/media/InfoMediaManager.java b/packages/SettingsLib/src/com/android/settingslib/media/InfoMediaManager.java
+index ad196b8c1..33be853fa 100644
+--- a/packages/SettingsLib/src/com/android/settingslib/media/InfoMediaManager.java
++++ b/packages/SettingsLib/src/com/android/settingslib/media/InfoMediaManager.java
+@@ -46,12 +46,16 @@ import static android.media.MediaRoute2Info.TYPE_WIRED_HEADSET;
+ import static android.media.session.MediaController.PlaybackInfo;
+ 
+ import static com.android.settingslib.media.LocalMediaManager.MediaDeviceState.STATE_SELECTED;
++import static com.android.settingslib.media.LocalMediaManager.MediaDeviceState.STATE_DISCONNECTED;
+ 
+ import android.annotation.TargetApi;
+ import android.bluetooth.BluetoothAdapter;
+ import android.bluetooth.BluetoothDevice;
+ import android.content.ComponentName;
+ import android.content.Context;
++import android.content.Intent;
++import android.media.MediaRouter2Manager;
++import android.os.Bundle;
+ import android.media.MediaRoute2Info;
+ import android.media.RouteListingPreference;
+ import android.media.RoutingSessionInfo;
+@@ -391,10 +395,87 @@ public abstract class InfoMediaManager {
+             return;
+         }
+ 
++        // XZ1C: the "AirPlay · choose a speaker" row opens AirCast's picker over the dialog
++        if (isXz1cAirCastPicker(device.mRouteInfo)) {
++            try {
++                mContext.sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
++                mContext.startActivity(new Intent()
++                        .setComponent(new ComponentName(XZ1C_AIRCAST_PKG,
++                                XZ1C_AIRCAST_PKG + ".CastActivity"))
++                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++            } catch (RuntimeException e) {
++                Log.w(TAG, "AirCast picker unavailable", e);
++            }
++            return;
++        }
+         device.setConnectedRecord();
++        // XZ1C: AirPlay speakers (AirCast) take over all of the phone's media audio, like a
++        // Bluetooth headset; picking any other output hands the audio back to the phone.
++        if (isXz1cAirCastRoute(device.mRouteInfo)) {
++            xz1cAirCast(device.mRouteInfo.getId());
++            return;
++        }
++        if (xz1cAirCastActive() != null) {
++            xz1cAirCast(null);
++        }
+         transferToRoute(device.mRouteInfo);
+     }
+ 
++    // ---- XZ1C AirCast -------------------------------------------------------------------
++    static final String XZ1C_AIRCAST_PKG = "com.xz1c.aircast";
++    static final String XZ1C_AIRCAST_FEATURE = "com.xz1c.aircast.SYSTEM_CAST";
++
++    static boolean isXz1cAirCastRoute(@Nullable MediaRoute2Info route) {
++        return route != null && route.getFeatures().contains(XZ1C_AIRCAST_FEATURE);
++    }
++
++    static boolean isXz1cAirCastPicker(@Nullable MediaRoute2Info route) {
++        if (!isXz1cAirCastRoute(route)) return false;
++        Bundle extras = route.getExtras();
++        return extras != null && extras.getBoolean("picker", false);
++    }
++
++    private static boolean isXz1cAirCastCasting(@NonNull MediaRoute2Info route) {
++        Bundle extras = route.getExtras();
++        return extras != null && extras.getBoolean("casting", false);
++    }
++
++    @NonNull
++    protected final List<MediaRoute2Info> xz1cAirCastRoutes() {
++        List<MediaRoute2Info> out = new ArrayList<>();
++        try {
++            for (MediaRoute2Info route : MediaRouter2Manager.getInstance(mContext).getAllRoutes()) {
++                if (isXz1cAirCastRoute(route)) out.add(route);
++            }
++        } catch (RuntimeException e) {
++            Log.w(TAG, "AirCast routes unavailable", e);
++        }
++        return out;
++    }
++
++    @Nullable
++    private MediaRoute2Info xz1cAirCastActive() {
++        for (MediaRoute2Info route : xz1cAirCastRoutes()) {
++            if (isXz1cAirCastCasting(route)) return route;
++        }
++        return null;
++    }
++
++    private void xz1cAirCast(@Nullable String routeId) {
++        Intent intent = new Intent(routeId != null ? "com.xz1c.aircast.CAST" : "com.xz1c.aircast.STOP")
++                .setComponent(new ComponentName(XZ1C_AIRCAST_PKG, XZ1C_AIRCAST_PKG + ".CastService"));
++        try {
++            if (routeId != null) {
++                intent.putExtra("route", routeId);
++                mContext.startForegroundService(intent);
++            } else {
++                mContext.startService(intent);
++            }
++        } catch (RuntimeException e) {
++            Log.w(TAG, "AirCast request failed", e);
++        }
++    }
++
+     /**
+      * Add a MediaDevice to let it play current media.
+      *
+@@ -545,6 +626,11 @@ public abstract class InfoMediaManager {
+         RoutingSessionInfo info = getActiveRoutingSession();
+ 
+         final List<MediaDevice> deviceList = new ArrayList<>();
++        MediaRoute2Info airCast = xz1cAirCastActive();
++        if (airCast != null) {
++            deviceList.add(new InfoMediaDevice(mContext, airCast, null));
++            return deviceList;
++        }
+         for (MediaRoute2Info route : getSelectedRoutes(info)) {
+             deviceList.add(
+                     new InfoMediaDevice(
+@@ -626,6 +712,29 @@ public abstract class InfoMediaManager {
+             }
+             addMediaDevice(route, activeSession);
+         }
++        MediaDevice airCastSelected = null;
++        for (MediaRoute2Info route : xz1cAirCastRoutes()) {
++            boolean listed = false;
++            for (MediaDevice existing : mMediaDevices) {
++                if (existing.getId().equals(route.getId())) listed = true;
++            }
++            if (listed) continue;
++            MediaDevice device = new InfoMediaDevice(mContext, route, null);
++            if (isXz1cAirCastCasting(route)) {
++                device.setState(STATE_SELECTED);
++                airCastSelected = device;
++            }
++            mMediaDevices.add(device);
++        }
++        if (airCastSelected != null) {
++            for (MediaDevice device : mMediaDevices) {
++                if (device != airCastSelected && device.getState() == STATE_SELECTED) {
++                    device.setState(STATE_DISCONNECTED);
++                }
++            }
++            mMediaDevices.remove(airCastSelected);
++            mMediaDevices.add(0, airCastSelected);
++        }
+ 
+         // In practice, mMediaDevices should always have at least one route.
+         if (!mMediaDevices.isEmpty()) {
+diff --git a/packages/SettingsLib/src/com/android/settingslib/media/RouterInfoMediaManager.java b/packages/SettingsLib/src/com/android/settingslib/media/RouterInfoMediaManager.java
+index eced7b3a1..4b9f726ab 100644
+--- a/packages/SettingsLib/src/com/android/settingslib/media/RouterInfoMediaManager.java
++++ b/packages/SettingsLib/src/com/android/settingslib/media/RouterInfoMediaManager.java
+@@ -115,8 +115,32 @@ public final class RouterInfoMediaManager extends InfoMediaManager {
+         }
+     }
+ 
++    // XZ1C: AirCast routes are hidden from the app-filtered router; watch them on the manager.
++    private final MediaRouter2Manager.Callback mXz1cAirCastCallback =
++            new MediaRouter2Manager.Callback() {
++                @Override
++                public void onRoutesUpdated() {
++                    refreshDevices();
++                }
++            };
++
++    // XZ1C: nothing asks for AirCast routes on its own, so the system never binds the AirCast
++    // provider. While the output switcher is open, ask for them (active scan) from SystemUI.
++    @Nullable private MediaRouter2 mXz1cAirCastRouter;
++    private final MediaRouter2.RouteCallback mXz1cAirCastRouteCallback =
++            new MediaRouter2.RouteCallback() {};
++
+     @Override
+     protected void registerRouter() {
++        mRouterManager.registerCallback(mExecutor, mXz1cAirCastCallback);
++        try {
++            mXz1cAirCastRouter = MediaRouter2.getInstance(mContext);
++            mXz1cAirCastRouter.registerRouteCallback(mExecutor, mXz1cAirCastRouteCallback,
++                    new RouteDiscoveryPreference.Builder(
++                            java.util.List.of(XZ1C_AIRCAST_FEATURE), true).build());
++        } catch (RuntimeException e) {
++            mXz1cAirCastRouter = null;
++        }
+         mRouter.registerRouteCallback(mExecutor, mRouteCallback, RouteDiscoveryPreference.EMPTY);
+         mRouter.registerRouteListingPreferenceUpdatedCallback(
+                 mExecutor, mRouteListingPreferenceCallback);
+@@ -140,6 +164,11 @@ public final class RouterInfoMediaManager extends InfoMediaManager {
+ 
+     @Override
+     protected void unregisterRouter() {
++        mRouterManager.unregisterCallback(mXz1cAirCastCallback);
++        if (mXz1cAirCastRouter != null) {
++            mXz1cAirCastRouter.unregisterRouteCallback(mXz1cAirCastRouteCallback);
++            mXz1cAirCastRouter = null;
++        }
+         mRouter.unregisterControllerCallback(mControllerCallback);
+         mRouter.unregisterTransferCallback(mTransferCallback);
+         mRouter.unregisterRouteListingPreferenceUpdatedCallback(mRouteListingPreferenceCallback);
+@@ -220,6 +249,10 @@ public final class RouterInfoMediaManager extends InfoMediaManager {
+ 
+     @Override
+     protected void setRouteVolume(@NonNull MediaRoute2Info route, int volume) {
++        if (isXz1cAirCastRoute(route)) {
++            mRouterManager.setRouteVolume(route, volume);
++            return;
++        }
+         mRouter.setRouteVolume(route, volume);
+     }
+ 
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_aqi_0.xml b/packages/SystemUI/res/drawable/xz1c_wx_aqi_0.xml
+index 81e6f7953..255520f35 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_aqi_0.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_aqi_0.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M5,19C3.3,9.8 9.8,3 21,3c0.5,10.2 -5.8,17.3 -16,16Z" android:strokeColor="#1e6827" android:strokeWidth="0.7" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="4.00" android:startY="19.00" android:endX="21.00" android:endY="3.00"><item android:offset="0" android:color="#278733"/><item android:offset="0.55" android:color="#3ccf4e"/><item android:offset="1" android:color="#94e59e"/></gradient></aapt:attr></path><path android:pathData="M9,8.5C11.5,5.6 15,4.3 18.5,4.2" android:strokeColor="#73FFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M2.8,21.6L6.6,17.6M6.6,17.6C10.2,14 13.4,10.8 17,6.8M10.3,14L10,10.3M13.4,10.9l3.4,0.4" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round"/>
++<group android:pivotX="12" android:pivotY="12" android:scaleX="1.02" android:scaleY="1.02"><path android:pathData="M5,19C3.3,9.8 9.8,3 21,3c0.5,10.2 -5.8,17.3 -16,16Z" android:strokeColor="#1e6827" android:strokeWidth="0.7" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="4.00" android:startY="19.00" android:endX="21.00" android:endY="3.00"><item android:offset="0" android:color="#278733"/><item android:offset="0.55" android:color="#3ccf4e"/><item android:offset="1" android:color="#94e59e"/></gradient></aapt:attr></path><path android:pathData="M9,8.5C11.5,5.6 15,4.3 18.5,4.2" android:strokeColor="#73FFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M2.8,21.6L6.6,17.6M6.6,17.6C10.2,14 13.4,10.8 17,6.8M10.3,14L10,10.3M13.4,10.9l3.4,0.4" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_aqi_1.xml b/packages/SystemUI/res/drawable/xz1c_wx_aqi_1.xml
+index 4a8ebf517..9b408d03b 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_aqi_1.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_aqi_1.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M5,19C3.3,9.8 9.8,3 21,3c0.5,10.2 -5.8,17.3 -16,16Z" android:strokeColor="#7a6a00" android:strokeWidth="0.7" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="4.00" android:startY="19.00" android:endX="21.00" android:endY="3.00"><item android:offset="0" android:color="#9f8900"/><item android:offset="0.55" android:color="#f5d300"/><item android:offset="1" android:color="#fae773"/></gradient></aapt:attr></path><path android:pathData="M9,8.5C11.5,5.6 15,4.3 18.5,4.2" android:strokeColor="#73FFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M2.8,21.6L6.6,17.6M6.6,17.6C10.2,14 13.4,10.8 17,6.8M10.3,14L10,10.3M13.4,10.9l3.4,0.4" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round"/>
++<group android:pivotX="12" android:pivotY="12" android:scaleX="1.02" android:scaleY="1.02"><path android:pathData="M5,19C3.3,9.8 9.8,3 21,3c0.5,10.2 -5.8,17.3 -16,16Z" android:strokeColor="#7a6a00" android:strokeWidth="0.7" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="4.00" android:startY="19.00" android:endX="21.00" android:endY="3.00"><item android:offset="0" android:color="#9f8900"/><item android:offset="0.55" android:color="#f5d300"/><item android:offset="1" android:color="#fae773"/></gradient></aapt:attr></path><path android:pathData="M9,8.5C11.5,5.6 15,4.3 18.5,4.2" android:strokeColor="#73FFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M2.8,21.6L6.6,17.6M6.6,17.6C10.2,14 13.4,10.8 17,6.8M10.3,14L10,10.3M13.4,10.9l3.4,0.4" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_aqi_2.xml b/packages/SystemUI/res/drawable/xz1c_wx_aqi_2.xml
+index 2a0a1f144..96d733c7e 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_aqi_2.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_aqi_2.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M5,19C3.3,9.8 9.8,3 21,3c0.5,10.2 -5.8,17.3 -16,16Z" android:strokeColor="#804510" android:strokeWidth="0.7" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="4.00" android:startY="19.00" android:endX="21.00" android:endY="3.00"><item android:offset="0" android:color="#a65a14"/><item android:offset="0.55" android:color="#ff8a1f"/><item android:offset="1" android:color="#ffbf84"/></gradient></aapt:attr></path><path android:pathData="M9,8.5C11.5,5.6 15,4.3 18.5,4.2" android:strokeColor="#73FFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M2.8,21.6L6.6,17.6M6.6,17.6C10.2,14 13.4,10.8 17,6.8M10.3,14L10,10.3M13.4,10.9l3.4,0.4" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round"/>
++<group android:pivotX="12" android:pivotY="12" android:scaleX="1.02" android:scaleY="1.02"><path android:pathData="M5,19C3.3,9.8 9.8,3 21,3c0.5,10.2 -5.8,17.3 -16,16Z" android:strokeColor="#804510" android:strokeWidth="0.7" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="4.00" android:startY="19.00" android:endX="21.00" android:endY="3.00"><item android:offset="0" android:color="#a65a14"/><item android:offset="0.55" android:color="#ff8a1f"/><item android:offset="1" android:color="#ffbf84"/></gradient></aapt:attr></path><path android:pathData="M9,8.5C11.5,5.6 15,4.3 18.5,4.2" android:strokeColor="#73FFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M2.8,21.6L6.6,17.6M6.6,17.6C10.2,14 13.4,10.8 17,6.8M10.3,14L10,10.3M13.4,10.9l3.4,0.4" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_aqi_3.xml b/packages/SystemUI/res/drawable/xz1c_wx_aqi_3.xml
+index c35d4277b..0dd8972c8 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_aqi_3.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_aqi_3.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M5,19C3.3,9.8 9.8,3 21,3c0.5,10.2 -5.8,17.3 -16,16Z" android:strokeColor="#781a16" android:strokeWidth="0.7" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="4.00" android:startY="19.00" android:endX="21.00" android:endY="3.00"><item android:offset="0" android:color="#9c221c"/><item android:offset="0.55" android:color="#f0352b"/><item android:offset="1" android:color="#f7908a"/></gradient></aapt:attr></path><path android:pathData="M9,8.5C11.5,5.6 15,4.3 18.5,4.2" android:strokeColor="#73FFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M2.8,21.6L6.6,17.6M6.6,17.6C10.2,14 13.4,10.8 17,6.8M10.3,14L10,10.3M13.4,10.9l3.4,0.4" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round"/>
++<group android:pivotX="12" android:pivotY="12" android:scaleX="1.02" android:scaleY="1.02"><path android:pathData="M5,19C3.3,9.8 9.8,3 21,3c0.5,10.2 -5.8,17.3 -16,16Z" android:strokeColor="#781a16" android:strokeWidth="0.7" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="4.00" android:startY="19.00" android:endX="21.00" android:endY="3.00"><item android:offset="0" android:color="#9c221c"/><item android:offset="0.55" android:color="#f0352b"/><item android:offset="1" android:color="#f7908a"/></gradient></aapt:attr></path><path android:pathData="M9,8.5C11.5,5.6 15,4.3 18.5,4.2" android:strokeColor="#73FFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M2.8,21.6L6.6,17.6M6.6,17.6C10.2,14 13.4,10.8 17,6.8M10.3,14L10,10.3M13.4,10.9l3.4,0.4" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_aqi_4.xml b/packages/SystemUI/res/drawable/xz1c_wx_aqi_4.xml
+index 520b5a0b2..6210139d3 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_aqi_4.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_aqi_4.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M5,19C3.3,9.8 9.8,3 21,3c0.5,10.2 -5.8,17.3 -16,16Z" android:strokeColor="#4e2458" android:strokeWidth="0.7" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="4.00" android:startY="19.00" android:endX="21.00" android:endY="3.00"><item android:offset="0" android:color="#652f72"/><item android:offset="0.55" android:color="#9b48b0"/><item android:offset="1" android:color="#c89ad4"/></gradient></aapt:attr></path><path android:pathData="M9,8.5C11.5,5.6 15,4.3 18.5,4.2" android:strokeColor="#73FFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M2.8,21.6L6.6,17.6M6.6,17.6C10.2,14 13.4,10.8 17,6.8M10.3,14L10,10.3M13.4,10.9l3.4,0.4" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round"/>
++<group android:pivotX="12" android:pivotY="12" android:scaleX="1.02" android:scaleY="1.02"><path android:pathData="M5,19C3.3,9.8 9.8,3 21,3c0.5,10.2 -5.8,17.3 -16,16Z" android:strokeColor="#4e2458" android:strokeWidth="0.7" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="4.00" android:startY="19.00" android:endX="21.00" android:endY="3.00"><item android:offset="0" android:color="#652f72"/><item android:offset="0.55" android:color="#9b48b0"/><item android:offset="1" android:color="#c89ad4"/></gradient></aapt:attr></path><path android:pathData="M9,8.5C11.5,5.6 15,4.3 18.5,4.2" android:strokeColor="#73FFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M2.8,21.6L6.6,17.6M6.6,17.6C10.2,14 13.4,10.8 17,6.8M10.3,14L10,10.3M13.4,10.9l3.4,0.4" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_aqi_5.xml b/packages/SystemUI/res/drawable/xz1c_wx_aqi_5.xml
+index 3ed61eac9..e496c0458 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_aqi_5.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_aqi_5.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M5,19C3.3,9.8 9.8,3 21,3c0.5,10.2 -5.8,17.3 -16,16Z" android:strokeColor="#460d16" android:strokeWidth="0.7" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="4.00" android:startY="19.00" android:endX="21.00" android:endY="3.00"><item android:offset="0" android:color="#5a111c"/><item android:offset="0.55" android:color="#8b1a2b"/><item android:offset="1" android:color="#bf818a"/></gradient></aapt:attr></path><path android:pathData="M9,8.5C11.5,5.6 15,4.3 18.5,4.2" android:strokeColor="#73FFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M2.8,21.6L6.6,17.6M6.6,17.6C10.2,14 13.4,10.8 17,6.8M10.3,14L10,10.3M13.4,10.9l3.4,0.4" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round"/>
++<group android:pivotX="12" android:pivotY="12" android:scaleX="1.02" android:scaleY="1.02"><path android:pathData="M5,19C3.3,9.8 9.8,3 21,3c0.5,10.2 -5.8,17.3 -16,16Z" android:strokeColor="#460d16" android:strokeWidth="0.7" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="4.00" android:startY="19.00" android:endX="21.00" android:endY="3.00"><item android:offset="0" android:color="#5a111c"/><item android:offset="0.55" android:color="#8b1a2b"/><item android:offset="1" android:color="#bf818a"/></gradient></aapt:attr></path><path android:pathData="M9,8.5C11.5,5.6 15,4.3 18.5,4.2" android:strokeColor="#73FFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M2.8,21.6L6.6,17.6M6.6,17.6C10.2,14 13.4,10.8 17,6.8M10.3,14L10,10.3M13.4,10.9l3.4,0.4" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_uv_0.xml b/packages/SystemUI/res/drawable/xz1c_wx_uv_0.xml
+index 1dc59a2b0..a320ed512 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_uv_0.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_uv_0.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M19.00,12.00L20.80,12.00M16.95,16.95L18.22,18.22M12.00,19.00L12.00,20.80M7.05,16.95L5.78,18.22M5.00,12.00L3.20,12.00M7.05,7.05L5.78,5.78M12.00,5.00L12.00,3.20M16.95,7.05L18.22,5.78" android:strokeColor="#4eb400" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M6.60,12.00a5.4,5.4 0 1,0 10.80,0a5.4,5.4 0 1,0 -10.80,0Z" android:strokeColor="#2f6c00" android:strokeWidth="0.6" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="radial" android:centerX="10.70" android:centerY="10.40" android:gradientRadius="7.56"><item android:offset="0" android:color="#c1e5a6"/><item android:offset="0.55" android:color="#4eb400"/><item android:offset="1" android:color="#377e00"/></gradient></aapt:attr></path><group android:rotation="-30" android:pivotX="10.3" android:pivotY="9.9"><path android:pathData="M8.50,9.90a1.8,1.1 0 1,0 3.60,0a1.8,1.1 0 1,0 -3.60,0Z" android:fillColor="#FFFFFF" android:fillAlpha="0.55"/></group>
++<path android:pathData="M12,1.8L15.5,3.3L21.5,4.3L21.2,12.1L19.4,16.1L16.1,19.6L12,22.4L7.9,19.6L4.6,16.1L2.8,12.1L2.5,4.3L8.5,3.3Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="3.00" android:startY="3.00" android:endX="21.00" android:endY="22.00"><item android:offset="0" android:color="#d8eec7"/><item android:offset="0.25" android:color="#95d266"/><item android:offset="0.65" android:color="#419500"/><item android:offset="1" android:color="#235100"/></gradient></aapt:attr></path><path android:pathData="M12,3.5L15.1,4.8L19.8,5.6L19.5,11.8L17.9,15.2L15,18.3L12,20.5L9,18.3L6.1,15.2L4.5,11.8L4.2,5.6L8.9,4.8Z"><aapt:attr name="android:fillColor"><gradient android:type="radial" android:centerX="8.00" android:centerY="6.50" android:gradientRadius="18.00"><item android:offset="0" android:color="#c1e5a6"/><item android:offset="0.32" android:color="#7ec845"/><item android:offset="0.68" android:color="#4eb400"/><item android:offset="1" android:color="#3a8700"/></gradient></aapt:attr></path><path android:pathData="M6,6.1Q9,4.8 12.7,5.1Q11.1,7.1 6.1,8.2Z" android:fillColor="#FFFFFF" android:fillAlpha="0.5"/><path android:pathData="M5.5,8.9L5.9,12.1Q7,16.1 11.1,19.6" android:fillAlpha="0.22" android:strokeColor="#FFFFFF" android:strokeWidth="0.65" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M6.7,9.1V12.1Q6.7,14.4 8.6,14.4Q10.5,14.4 10.5,12.1V9.1M12.3,9.1L14.5,14.4L16.7,9.1" android:strokeColor="#193a00" android:strokeWidth="1.35" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_uv_1.xml b/packages/SystemUI/res/drawable/xz1c_wx_uv_1.xml
+index 599ad8dee..bd6b2bc71 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_uv_1.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_uv_1.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M19.00,12.00L21.40,12.00M16.95,16.95L18.65,18.65M12.00,19.00L12.00,21.40M7.05,16.95L5.35,18.65M5.00,12.00L2.60,12.00M7.05,7.05L5.35,5.35M12.00,5.00L12.00,2.60M16.95,7.05L18.65,5.35" android:strokeColor="#f7c600" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M6.60,12.00a5.4,5.4 0 1,0 10.80,0a5.4,5.4 0 1,0 -10.80,0Z" android:strokeColor="#947700" android:strokeWidth="0.6" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="radial" android:centerX="10.70" android:centerY="10.40" android:gradientRadius="7.56"><item android:offset="0" android:color="#fceba6"/><item android:offset="0.55" android:color="#f7c600"/><item android:offset="1" android:color="#ad8b00"/></gradient></aapt:attr></path><group android:rotation="-30" android:pivotX="10.3" android:pivotY="9.9"><path android:pathData="M8.50,9.90a1.8,1.1 0 1,0 3.60,0a1.8,1.1 0 1,0 -3.60,0Z" android:fillColor="#FFFFFF" android:fillAlpha="0.55"/></group>
++<path android:pathData="M12,1.8L15.5,3.3L21.5,4.3L21.2,12.1L19.4,16.1L16.1,19.6L12,22.4L7.9,19.6L4.6,16.1L2.8,12.1L2.5,4.3L8.5,3.3Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="3.00" android:startY="3.00" android:endX="21.00" android:endY="22.00"><item android:offset="0" android:color="#fdf2c7"/><item android:offset="0.25" android:color="#fadd66"/><item android:offset="0.65" android:color="#cda400"/><item android:offset="1" android:color="#6f5900"/></gradient></aapt:attr></path><path android:pathData="M12,3.5L15.1,4.8L19.8,5.6L19.5,11.8L17.9,15.2L15,18.3L12,20.5L9,18.3L6.1,15.2L4.5,11.8L4.2,5.6L8.9,4.8Z"><aapt:attr name="android:fillColor"><gradient android:type="radial" android:centerX="8.00" android:centerY="6.50" android:gradientRadius="18.00"><item android:offset="0" android:color="#fceba6"/><item android:offset="0.32" android:color="#f9d545"/><item android:offset="0.68" android:color="#f7c600"/><item android:offset="1" android:color="#b99400"/></gradient></aapt:attr></path><path android:pathData="M6,6.1Q9,4.8 12.7,5.1Q11.1,7.1 6.1,8.2Z" android:fillColor="#FFFFFF" android:fillAlpha="0.5"/><path android:pathData="M5.5,8.9L5.9,12.1Q7,16.1 11.1,19.6" android:fillAlpha="0.22" android:strokeColor="#FFFFFF" android:strokeWidth="0.65" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M6.7,9.1V12.1Q6.7,14.4 8.6,14.4Q10.5,14.4 10.5,12.1V9.1M12.3,9.1L14.5,14.4L16.7,9.1" android:strokeColor="#4f3f00" android:strokeWidth="1.35" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_uv_2.xml b/packages/SystemUI/res/drawable/xz1c_wx_uv_2.xml
+index 590b74ff7..56f448efe 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_uv_2.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_uv_2.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M19.00,12.00L22.00,12.00M16.95,16.95L19.07,19.07M12.00,19.00L12.00,22.00M7.05,16.95L4.93,19.07M5.00,12.00L2.00,12.00M7.05,7.05L4.93,4.93M12.00,5.00L12.00,2.00M16.95,7.05L19.07,4.93" android:strokeColor="#f87400" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M6.60,12.00a5.4,5.4 0 1,0 10.80,0a5.4,5.4 0 1,0 -10.80,0Z" android:strokeColor="#954600" android:strokeWidth="0.6" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="radial" android:centerX="10.70" android:centerY="10.40" android:gradientRadius="7.56"><item android:offset="0" android:color="#fdcea6"/><item android:offset="0.55" android:color="#f87400"/><item android:offset="1" android:color="#ae5100"/></gradient></aapt:attr></path><group android:rotation="-30" android:pivotX="10.3" android:pivotY="9.9"><path android:pathData="M8.50,9.90a1.8,1.1 0 1,0 3.60,0a1.8,1.1 0 1,0 -3.60,0Z" android:fillColor="#FFFFFF" android:fillAlpha="0.55"/></group>
++<path android:pathData="M12,1.8L15.5,3.3L21.5,4.3L21.2,12.1L19.4,16.1L16.1,19.6L12,22.4L7.9,19.6L4.6,16.1L2.8,12.1L2.5,4.3L8.5,3.3Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="3.00" android:startY="3.00" android:endX="21.00" android:endY="22.00"><item android:offset="0" android:color="#fde0c7"/><item android:offset="0.25" android:color="#fbac66"/><item android:offset="0.65" android:color="#ce6000"/><item android:offset="1" android:color="#703400"/></gradient></aapt:attr></path><path android:pathData="M12,3.5L15.1,4.8L19.8,5.6L19.5,11.8L17.9,15.2L15,18.3L12,20.5L9,18.3L6.1,15.2L4.5,11.8L4.2,5.6L8.9,4.8Z"><aapt:attr name="android:fillColor"><gradient android:type="radial" android:centerX="8.00" android:centerY="6.50" android:gradientRadius="18.00"><item android:offset="0" android:color="#fdcea6"/><item android:offset="0.32" android:color="#fa9a45"/><item android:offset="0.68" android:color="#f87400"/><item android:offset="1" android:color="#ba5700"/></gradient></aapt:attr></path><path android:pathData="M6,6.1Q9,4.8 12.7,5.1Q11.1,7.1 6.1,8.2Z" android:fillColor="#FFFFFF" android:fillAlpha="0.5"/><path android:pathData="M5.5,8.9L5.9,12.1Q7,16.1 11.1,19.6" android:fillAlpha="0.22" android:strokeColor="#FFFFFF" android:strokeWidth="0.65" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M6.7,9.1V12.1Q6.7,14.4 8.6,14.4Q10.5,14.4 10.5,12.1V9.1M12.3,9.1L14.5,14.4L16.7,9.1" android:strokeColor="#4f2500" android:strokeWidth="1.35" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_uv_3.xml b/packages/SystemUI/res/drawable/xz1c_wx_uv_3.xml
+index 0ab784daf..8523e9aff 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_uv_3.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_uv_3.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M19.00,12.00L22.50,12.00M16.95,16.95L19.42,19.42M12.00,19.00L12.00,22.50M7.05,16.95L4.58,19.42M5.00,12.00L1.50,12.00M7.05,7.05L4.58,4.58M12.00,5.00L12.00,1.50M16.95,7.05L19.42,4.58" android:strokeColor="#e0202f" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M6.60,12.00a5.4,5.4 0 1,0 10.80,0a5.4,5.4 0 1,0 -10.80,0Z" android:strokeColor="#86131c" android:strokeWidth="0.6" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="radial" android:centerX="10.70" android:centerY="10.40" android:gradientRadius="7.56"><item android:offset="0" android:color="#f4b1b6"/><item android:offset="0.55" android:color="#e0202f"/><item android:offset="1" android:color="#9d1621"/></gradient></aapt:attr></path><group android:rotation="-30" android:pivotX="10.3" android:pivotY="9.9"><path android:pathData="M8.50,9.90a1.8,1.1 0 1,0 3.60,0a1.8,1.1 0 1,0 -3.60,0Z" android:fillColor="#FFFFFF" android:fillAlpha="0.55"/></group>
++<path android:pathData="M12,1.8L15.5,3.3L21.5,4.3L21.2,12.1L19.4,16.1L16.1,19.6L12,22.4L7.9,19.6L4.6,16.1L2.8,12.1L2.5,4.3L8.5,3.3Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="3.00" android:startY="3.00" android:endX="21.00" android:endY="22.00"><item android:offset="0" android:color="#f8ced1"/><item android:offset="0.25" android:color="#ec7982"/><item android:offset="0.65" android:color="#ba1b27"/><item android:offset="1" android:color="#650e15"/></gradient></aapt:attr></path><path android:pathData="M12,3.5L15.1,4.8L19.8,5.6L19.5,11.8L17.9,15.2L15,18.3L12,20.5L9,18.3L6.1,15.2L4.5,11.8L4.2,5.6L8.9,4.8Z"><aapt:attr name="android:fillColor"><gradient android:type="radial" android:centerX="8.00" android:centerY="6.50" android:gradientRadius="18.00"><item android:offset="0" android:color="#f4b1b6"/><item android:offset="0.32" android:color="#e85c67"/><item android:offset="0.68" android:color="#e0202f"/><item android:offset="1" android:color="#a81823"/></gradient></aapt:attr></path><path android:pathData="M6,6.1Q9,4.8 12.7,5.1Q11.1,7.1 6.1,8.2Z" android:fillColor="#FFFFFF" android:fillAlpha="0.5"/><path android:pathData="M5.5,8.9L5.9,12.1Q7,16.1 11.1,19.6" android:fillAlpha="0.22" android:strokeColor="#FFFFFF" android:strokeWidth="0.65" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M6.7,9.1V12.1Q6.7,14.4 8.6,14.4Q10.5,14.4 10.5,12.1V9.1M12.3,9.1L14.5,14.4L16.7,9.1" android:strokeColor="#FFF9F0" android:strokeWidth="1.35" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_uv_4.xml b/packages/SystemUI/res/drawable/xz1c_wx_uv_4.xml
+index 53a979f81..9ba089416 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_uv_4.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_uv_4.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M19.00,12.00L23.00,12.00M16.95,16.95L19.78,19.78M12.00,19.00L12.00,23.00M7.05,16.95L4.22,19.78M5.00,12.00L1.00,12.00M7.05,7.05L4.22,4.22M12.00,5.00L12.00,1.00M16.95,7.05L19.78,4.22" android:strokeColor="#9b6bff" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M6.60,12.00a5.4,5.4 0 1,0 10.80,0a5.4,5.4 0 1,0 -10.80,0Z" android:strokeColor="#5d4099" android:strokeWidth="0.6" android:strokeLineCap="round" android:strokeLineJoin="round"><aapt:attr name="android:fillColor"><gradient android:type="radial" android:centerX="10.70" android:centerY="10.40" android:gradientRadius="7.56"><item android:offset="0" android:color="#dccbff"/><item android:offset="0.55" android:color="#9b6bff"/><item android:offset="1" android:color="#6c4bb2"/></gradient></aapt:attr></path><group android:rotation="-30" android:pivotX="10.3" android:pivotY="9.9"><path android:pathData="M8.50,9.90a1.8,1.1 0 1,0 3.60,0a1.8,1.1 0 1,0 -3.60,0Z" android:fillColor="#FFFFFF" android:fillAlpha="0.55"/></group>
++<path android:pathData="M12,1.8L15.5,3.3L21.5,4.3L21.2,12.1L19.4,16.1L16.1,19.6L12,22.4L7.9,19.6L4.6,16.1L2.8,12.1L2.5,4.3L8.5,3.3Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="3.00" android:startY="3.00" android:endX="21.00" android:endY="22.00"><item android:offset="0" android:color="#e9deff"/><item android:offset="0.25" android:color="#c3a6ff"/><item android:offset="0.65" android:color="#8159d4"/><item android:offset="1" android:color="#463073"/></gradient></aapt:attr></path><path android:pathData="M12,3.5L15.1,4.8L19.8,5.6L19.5,11.8L17.9,15.2L15,18.3L12,20.5L9,18.3L6.1,15.2L4.5,11.8L4.2,5.6L8.9,4.8Z"><aapt:attr name="android:fillColor"><gradient android:type="radial" android:centerX="8.00" android:centerY="6.50" android:gradientRadius="18.00"><item android:offset="0" android:color="#dccbff"/><item android:offset="0.32" android:color="#b693ff"/><item android:offset="0.68" android:color="#9b6bff"/><item android:offset="1" android:color="#7450bf"/></gradient></aapt:attr></path><path android:pathData="M6,6.1Q9,4.8 12.7,5.1Q11.1,7.1 6.1,8.2Z" android:fillColor="#FFFFFF" android:fillAlpha="0.5"/><path android:pathData="M5.5,8.9L5.9,12.1Q7,16.1 11.1,19.6" android:fillAlpha="0.22" android:strokeColor="#FFFFFF" android:strokeWidth="0.65" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M6.7,9.1V12.1Q6.7,14.4 8.6,14.4Q10.5,14.4 10.5,12.1V9.1M12.3,9.1L14.5,14.4L16.7,9.1" android:strokeColor="#FFF9F0" android:strokeWidth="1.35" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_wind_0.xml b/packages/SystemUI/res/drawable/xz1c_wx_wind_0.xml
+index 482a03917..b8e9d9b96 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_wind_0.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_wind_0.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M4.6,2.6a1,1 0 0,1 1,1V20.6a1,1 0 0,1 -2,0V3.6a1,1 0 0,1 1,-1Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="3.60" android:startY="0.00" android:endX="5.60" android:endY="0.00"><item android:offset="0" android:color="#8a939e"/><item android:offset="0.45" android:color="#f4f6f8"/><item android:offset="1" android:color="#6b737d"/></gradient></aapt:attr></path><path android:pathData="M1.60,21.70a3,1 0 1,0 6.00,0a3,1 0 1,0 -6.00,0Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="1.60" android:startY="0.00" android:endX="7.60" android:endY="0.00"><item android:offset="0" android:color="#8a939e"/><item android:offset="0.45" android:color="#f4f6f8"/><item android:offset="1" android:color="#6b737d"/></gradient></aapt:attr></path><path android:pathData="M3.35,2.60a1.25,1.25 0 1,0 2.50,0a1.25,1.25 0 1,0 -2.50,0Z" android:fillColor="#4fc3f7" android:strokeColor="#2f7594" android:strokeWidth="0.5" android:strokeLineCap="round" android:strokeLineJoin="round"/><group android:translateX="5.8" android:translateY="6.4" android:rotation="62"><path android:pathData="M0.00,-3.80L2.75,-3.10L2.75,3.35L0.00,3.80Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.80" android:endX="0.00" android:endY="3.80"><item android:offset="0" android:color="#95dbfa"/><item android:offset="0.5" android:color="#4fc3f7"/><item android:offset="1" android:color="#337fa1"/></gradient></aapt:attr></path><path android:pathData="M2.75,-3.10L5.50,-2.15L5.50,3.15L2.75,3.35Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.10" android:endX="0.00" android:endY="3.35"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M5.50,-2.15L8.25,-0.95L8.25,3.20L5.50,3.15Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-2.15" android:endX="0.00" android:endY="3.15"><item android:offset="0" android:color="#95dbfa"/><item android:offset="0.5" android:color="#4fc3f7"/><item android:offset="1" android:color="#337fa1"/></gradient></aapt:attr></path><path android:pathData="M8.25,-0.95L11.00,0.50L11.00,3.50L8.25,3.20Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-0.95" android:endX="0.00" android:endY="3.20"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M0,-3.8L11,0.50L11,3.50L0,3.8Z" android:strokeColor="#28627c" android:strokeWidth="0.55" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M-1.00,0.00a1,4.1 0 1,0 2.00,0a1,4.1 0 1,0 -2.00,0Z" android:fillColor="#2b6b88" android:strokeColor="#d0d6dd" android:strokeWidth="0.9" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
++<group android:translateX="8.001" android:translateY="6.476" android:rotation="50" android:scaleX="1.15" android:scaleY="1.15"><path android:pathData="M0.00,-3.80L3.75,-3.47L3.75,3.53L0.00,3.80Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.80" android:endX="0.00" android:endY="3.80"><item android:offset="0" android:color="#95dbfa"/><item android:offset="0.5" android:color="#4fc3f7"/><item android:offset="1" android:color="#337fa1"/></gradient></aapt:attr></path><path android:pathData="M3.75,-3.47L7.50,-3.08L7.50,3.33L3.75,3.53Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.47" android:endX="0.00" android:endY="3.53"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M7.50,-3.08L11.25,-2.62L11.25,3.18L7.50,3.33Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.08" android:endX="0.00" android:endY="3.33"><item android:offset="0" android:color="#95dbfa"/><item android:offset="0.5" android:color="#4fc3f7"/><item android:offset="1" android:color="#337fa1"/></gradient></aapt:attr></path><path android:pathData="M11.25,-2.62L15.00,-2.10L15.00,3.10L11.25,3.18Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-2.62" android:endX="0.00" android:endY="3.18"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M0,-3.8L15,-2.10L15,3.10L0,3.8Z" android:strokeColor="#28627c" android:strokeWidth="0.55" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M-1.00,0.00a1,4.1 0 1,0 2.00,0a1,4.1 0 1,0 -2.00,0Z" android:fillColor="#2b6b88" android:strokeColor="#d0d6dd" android:strokeWidth="0.9" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_wind_1.xml b/packages/SystemUI/res/drawable/xz1c_wx_wind_1.xml
+index 656e42fa1..8d5a8da9a 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_wind_1.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_wind_1.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M4.6,2.6a1,1 0 0,1 1,1V20.6a1,1 0 0,1 -2,0V3.6a1,1 0 0,1 1,-1Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="3.60" android:startY="0.00" android:endX="5.60" android:endY="0.00"><item android:offset="0" android:color="#8a939e"/><item android:offset="0.45" android:color="#f4f6f8"/><item android:offset="1" android:color="#6b737d"/></gradient></aapt:attr></path><path android:pathData="M1.60,21.70a3,1 0 1,0 6.00,0a3,1 0 1,0 -6.00,0Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="1.60" android:startY="0.00" android:endX="7.60" android:endY="0.00"><item android:offset="0" android:color="#8a939e"/><item android:offset="0.45" android:color="#f4f6f8"/><item android:offset="1" android:color="#6b737d"/></gradient></aapt:attr></path><path android:pathData="M3.35,2.60a1.25,1.25 0 1,0 2.50,0a1.25,1.25 0 1,0 -2.50,0Z" android:fillColor="#66d17a" android:strokeColor="#3d7d49" android:strokeWidth="0.5" android:strokeLineCap="round" android:strokeLineJoin="round"/><group android:translateX="5.8" android:translateY="6.4" android:rotation="36"><path android:pathData="M0.00,-3.80L3.38,-3.29L3.38,3.46L0.00,3.80Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.80" android:endX="0.00" android:endY="3.80"><item android:offset="0" android:color="#a3e3af"/><item android:offset="0.5" android:color="#66d17a"/><item android:offset="1" android:color="#42884f"/></gradient></aapt:attr></path><path android:pathData="M3.38,-3.29L6.75,-2.62L6.75,3.28L3.38,3.46Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.29" android:endX="0.00" android:endY="3.46"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M6.75,-2.62L10.12,-1.79L10.12,3.26L6.75,3.28Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-2.62" android:endX="0.00" android:endY="3.28"><item android:offset="0" android:color="#a3e3af"/><item android:offset="0.5" android:color="#66d17a"/><item android:offset="1" android:color="#42884f"/></gradient></aapt:attr></path><path android:pathData="M10.12,-1.79L13.50,-0.80L13.50,3.40L10.12,3.26Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-1.79" android:endX="0.00" android:endY="3.26"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M0,-3.8L13.5,-0.80L13.5,3.40L0,3.8Z" android:strokeColor="#33683d" android:strokeWidth="0.55" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M-1.00,0.00a1,4.1 0 1,0 2.00,0a1,4.1 0 1,0 -2.00,0Z" android:fillColor="#387343" android:strokeColor="#d0d6dd" android:strokeWidth="0.9" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
++<group android:translateX="4.898" android:translateY="10.368" android:rotation="18" android:scaleX="1.15" android:scaleY="1.15"><path android:pathData="M0.00,-3.80L3.75,-3.47L3.75,3.53L0.00,3.80Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.80" android:endX="0.00" android:endY="3.80"><item android:offset="0" android:color="#a3e3af"/><item android:offset="0.5" android:color="#66d17a"/><item android:offset="1" android:color="#42884f"/></gradient></aapt:attr></path><path android:pathData="M3.75,-3.47L7.50,-3.08L7.50,3.33L3.75,3.53Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.47" android:endX="0.00" android:endY="3.53"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M7.50,-3.08L11.25,-2.62L11.25,3.18L7.50,3.33Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.08" android:endX="0.00" android:endY="3.33"><item android:offset="0" android:color="#a3e3af"/><item android:offset="0.5" android:color="#66d17a"/><item android:offset="1" android:color="#42884f"/></gradient></aapt:attr></path><path android:pathData="M11.25,-2.62L15.00,-2.10L15.00,3.10L11.25,3.18Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-2.62" android:endX="0.00" android:endY="3.18"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M0,-3.8L15,-2.10L15,3.10L0,3.8Z" android:strokeColor="#33683d" android:strokeWidth="0.55" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M-1.00,0.00a1,4.1 0 1,0 2.00,0a1,4.1 0 1,0 -2.00,0Z" android:fillColor="#387343" android:strokeColor="#d0d6dd" android:strokeWidth="0.9" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_wind_2.xml b/packages/SystemUI/res/drawable/xz1c_wx_wind_2.xml
+index fdbad57d0..fda19995b 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_wind_2.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_wind_2.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M4.6,2.6a1,1 0 0,1 1,1V20.6a1,1 0 0,1 -2,0V3.6a1,1 0 0,1 1,-1Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="3.60" android:startY="0.00" android:endX="5.60" android:endY="0.00"><item android:offset="0" android:color="#8a939e"/><item android:offset="0.45" android:color="#f4f6f8"/><item android:offset="1" android:color="#6b737d"/></gradient></aapt:attr></path><path android:pathData="M1.60,21.70a3,1 0 1,0 6.00,0a3,1 0 1,0 -6.00,0Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="1.60" android:startY="0.00" android:endX="7.60" android:endY="0.00"><item android:offset="0" android:color="#8a939e"/><item android:offset="0.45" android:color="#f4f6f8"/><item android:offset="1" android:color="#6b737d"/></gradient></aapt:attr></path><path android:pathData="M3.35,2.60a1.25,1.25 0 1,0 2.50,0a1.25,1.25 0 1,0 -2.50,0Z" android:fillColor="#ffa726" android:strokeColor="#996417" android:strokeWidth="0.5" android:strokeLineCap="round" android:strokeLineJoin="round"/><group android:translateX="5.8" android:translateY="6.4" android:rotation="12"><path android:pathData="M0.00,-3.80L3.75,-3.47L3.75,3.53L0.00,3.80Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.80" android:endX="0.00" android:endY="3.80"><item android:offset="0" android:color="#ffca7d"/><item android:offset="0.5" android:color="#ffa726"/><item android:offset="1" android:color="#a66d19"/></gradient></aapt:attr></path><path android:pathData="M3.75,-3.47L7.50,-3.08L7.50,3.33L3.75,3.53Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.47" android:endX="0.00" android:endY="3.53"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M7.50,-3.08L11.25,-2.62L11.25,3.18L7.50,3.33Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.08" android:endX="0.00" android:endY="3.33"><item android:offset="0" android:color="#ffca7d"/><item android:offset="0.5" android:color="#ffa726"/><item android:offset="1" android:color="#a66d19"/></gradient></aapt:attr></path><path android:pathData="M11.25,-2.62L15.00,-2.10L15.00,3.10L11.25,3.18Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-2.62" android:endX="0.00" android:endY="3.18"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M0,-3.8L15,-2.10L15,3.10L0,3.8Z" android:strokeColor="#805413" android:strokeWidth="0.55" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M-1.00,0.00a1,4.1 0 1,0 2.00,0a1,4.1 0 1,0 -2.00,0Z" android:fillColor="#8c5c15" android:strokeColor="#d0d6dd" android:strokeWidth="0.9" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
++<group android:translateX="4.065" android:translateY="12.000" android:rotation="0" android:scaleX="1.15" android:scaleY="1.15"><path android:pathData="M0.00,-3.80L3.75,-3.47L3.75,3.53L0.00,3.80Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.80" android:endX="0.00" android:endY="3.80"><item android:offset="0" android:color="#ffca7d"/><item android:offset="0.5" android:color="#ffa726"/><item android:offset="1" android:color="#a66d19"/></gradient></aapt:attr></path><path android:pathData="M3.75,-3.47L7.50,-3.08L7.50,3.33L3.75,3.53Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.47" android:endX="0.00" android:endY="3.53"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M7.50,-3.08L11.25,-2.62L11.25,3.18L7.50,3.33Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.08" android:endX="0.00" android:endY="3.33"><item android:offset="0" android:color="#ffca7d"/><item android:offset="0.5" android:color="#ffa726"/><item android:offset="1" android:color="#a66d19"/></gradient></aapt:attr></path><path android:pathData="M11.25,-2.62L15.00,-2.10L15.00,3.10L11.25,3.18Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-2.62" android:endX="0.00" android:endY="3.18"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M0,-3.8L15,-2.10L15,3.10L0,3.8Z" android:strokeColor="#805413" android:strokeWidth="0.55" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M-1.00,0.00a1,4.1 0 1,0 2.00,0a1,4.1 0 1,0 -2.00,0Z" android:fillColor="#8c5c15" android:strokeColor="#d0d6dd" android:strokeWidth="0.9" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
+ </vector>
+diff --git a/packages/SystemUI/res/drawable/xz1c_wx_wind_3.xml b/packages/SystemUI/res/drawable/xz1c_wx_wind_3.xml
+index 2f5b2c5a2..30caa1326 100644
+--- a/packages/SystemUI/res/drawable/xz1c_wx_wind_3.xml
++++ b/packages/SystemUI/res/drawable/xz1c_wx_wind_3.xml
+@@ -4,5 +4,5 @@
+     xmlns:aapt="http://schemas.android.com/aapt"
+     android:width="24dp" android:height="24dp"
+     android:viewportWidth="24" android:viewportHeight="24">
+-<path android:pathData="M4.6,2.6a1,1 0 0,1 1,1V20.6a1,1 0 0,1 -2,0V3.6a1,1 0 0,1 1,-1Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="3.60" android:startY="0.00" android:endX="5.60" android:endY="0.00"><item android:offset="0" android:color="#8a939e"/><item android:offset="0.45" android:color="#f4f6f8"/><item android:offset="1" android:color="#6b737d"/></gradient></aapt:attr></path><path android:pathData="M1.60,21.70a3,1 0 1,0 6.00,0a3,1 0 1,0 -6.00,0Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="1.60" android:startY="0.00" android:endX="7.60" android:endY="0.00"><item android:offset="0" android:color="#8a939e"/><item android:offset="0.45" android:color="#f4f6f8"/><item android:offset="1" android:color="#6b737d"/></gradient></aapt:attr></path><path android:pathData="M3.35,2.60a1.25,1.25 0 1,0 2.50,0a1.25,1.25 0 1,0 -2.50,0Z" android:fillColor="#f4433a" android:strokeColor="#922823" android:strokeWidth="0.5" android:strokeLineCap="round" android:strokeLineJoin="round"/><group android:translateX="5.8" android:translateY="6.4" android:rotation="0"><path android:pathData="M0.00,-3.80L4.00,-3.60L4.00,3.60L0.00,3.80Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.80" android:endX="0.00" android:endY="3.80"><item android:offset="0" android:color="#f88e89"/><item android:offset="0.5" android:color="#f4433a"/><item android:offset="1" android:color="#9f2c26"/></gradient></aapt:attr></path><path android:pathData="M4.00,-3.60L8.00,-3.40L8.00,3.40L4.00,3.60Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.60" android:endX="0.00" android:endY="3.60"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M8.00,-3.40L12.00,-3.20L12.00,3.20L8.00,3.40Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.40" android:endX="0.00" android:endY="3.40"><item android:offset="0" android:color="#f88e89"/><item android:offset="0.5" android:color="#f4433a"/><item android:offset="1" android:color="#9f2c26"/></gradient></aapt:attr></path><path android:pathData="M12.00,-3.20L16.00,-3.00L16.00,3.00L12.00,3.20Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.20" android:endX="0.00" android:endY="3.20"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M0,-3.8L16,-3.00L16,3.00L0,3.8Z" android:strokeColor="#7a221d" android:strokeWidth="0.55" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M-1.00,0.00a1,4.1 0 1,0 2.00,0a1,4.1 0 1,0 -2.00,0Z" android:fillColor="#862520" android:strokeColor="#d0d6dd" android:strokeWidth="0.9" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
++<group android:translateX="4.065" android:translateY="12.000" android:rotation="0" android:scaleX="1.15" android:scaleY="1.15"><path android:pathData="M0.00,-3.80L3.75,-3.47L3.75,3.53L0.00,3.80Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.80" android:endX="0.00" android:endY="3.80"><item android:offset="0" android:color="#f88e89"/><item android:offset="0.5" android:color="#f4433a"/><item android:offset="1" android:color="#9f2c26"/></gradient></aapt:attr></path><path android:pathData="M3.75,-3.47L7.50,-3.08L7.50,3.33L3.75,3.53Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.47" android:endX="0.00" android:endY="3.53"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M7.50,-3.08L11.25,-2.62L11.25,3.18L7.50,3.33Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-3.08" android:endX="0.00" android:endY="3.33"><item android:offset="0" android:color="#f88e89"/><item android:offset="0.5" android:color="#f4433a"/><item android:offset="1" android:color="#9f2c26"/></gradient></aapt:attr></path><path android:pathData="M11.25,-2.62L15.00,-2.10L15.00,3.10L11.25,3.18Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0.00" android:startY="-2.62" android:endX="0.00" android:endY="3.18"><item android:offset="0" android:color="#ffffff"/><item android:offset="0.6" android:color="#eef1f5"/><item android:offset="1" android:color="#b8c0cc"/></gradient></aapt:attr></path><path android:pathData="M0,-3.8L15,-2.10L15,3.10L0,3.8Z" android:strokeColor="#7a221d" android:strokeWidth="0.55" android:strokeLineCap="round" android:strokeLineJoin="round"/><path android:pathData="M-1.00,0.00a1,4.1 0 1,0 2.00,0a1,4.1 0 1,0 -2.00,0Z" android:fillColor="#862520" android:strokeColor="#d0d6dd" android:strokeWidth="0.9" android:strokeLineCap="round" android:strokeLineJoin="round"/></group>
+ </vector>
+diff --git a/packages/SystemUI/res/values/ids.xml b/packages/SystemUI/res/values/ids.xml
+index 88ed4e353..05bfbc566 100644
+--- a/packages/SystemUI/res/values/ids.xml
++++ b/packages/SystemUI/res/values/ids.xml
+@@ -288,4 +288,6 @@
+ 
+     <item type="id" name="brightness_dialog_slider" />
+ 
++    <!-- XZ1C: the Apple TV remote's media card (Xz1cAppleTvCard) -->
++    <item type="id" name="xz1c_appletv_card" />
+ </resources>
+diff --git a/packages/SystemUI/src/com/android/keyguard/KeyguardSliceView.java b/packages/SystemUI/src/com/android/keyguard/KeyguardSliceView.java
+index d0ee8d718..6425727d2 100644
+--- a/packages/SystemUI/src/com/android/keyguard/KeyguardSliceView.java
++++ b/packages/SystemUI/src/com/android/keyguard/KeyguardSliceView.java
+@@ -447,7 +447,7 @@ public class KeyguardSliceView extends LinearLayout {
+             updatePadding();
+         }
+ 
+-        // xz1c: lock screen weather icons (windsock / UV sun / AQI leaf). Slices drop
++        // xz1c: lock screen weather icons (pole-free windsock / UV shield / AQI leaf). Slices drop
+         // non-parcelable spans, so Xz1cKeyguardInfo writes private-use placeholders
+         // (U+E100.., U+E110.., U+E120..) that are swapped for drawables here.
+         private static final int[] XZ1C_WX_ICONS = {
+@@ -470,7 +470,10 @@ public class KeyguardSliceView extends LinearLayout {
+                 float textSize) {
+             if (text == null || context == null) return text;
+             android.text.SpannableStringBuilder out = null;
+-            int size = Math.round(textSize * 1.15f);
++            // One size for wind, UV and AQI. Artwork uses a common ~20/24
++            // visible envelope, matching the weather emoji's optical size.
++            // Never enlarge one category or fit each wind pose independently.
++            int size = Math.max(1, Math.round(textSize * 1.15f));
+             for (int i = 0; i < text.length(); i++) {
+                 int idx = xz1cIconIndex(text.charAt(i));
+                 if (idx < 0) continue;
+diff --git a/packages/SystemUI/src/com/android/systemui/battery/unified/BatteryLayersDrawable.kt b/packages/SystemUI/src/com/android/systemui/battery/unified/BatteryLayersDrawable.kt
+index 1f43896f2..f393b4bdc 100644
+--- a/packages/SystemUI/src/com/android/systemui/battery/unified/BatteryLayersDrawable.kt
++++ b/packages/SystemUI/src/com/android/systemui/battery/unified/BatteryLayersDrawable.kt
+@@ -232,6 +232,25 @@ class BatteryLayersDrawable(
+             )
+         }.getOrDefault(Color.parseColor("#E8EAED"))
+ 
++    // XZ1C: sync the child drawables with batteryState at construction. This must come after
++    // every property above (Kotlin runs initializers in order; currentFgColor would otherwise be
++    // reset to white after updateColorProfile).
++    init {
++        // The child drawables have independent defaults (the fill starts at 0%, while the text
++        // drawables start at 100/88). Do not rely on a later BatteryController callback to make
++        // them match batteryState: keyguard can create this drawable after the latest callback,
++        // leaving only the frame visible until another battery event arrives.
++        fill.batteryLevel = batteryState.level
++        textOnly.batteryLevel = batteryState.level
++        spaceSharingText.batteryLevel = batteryState.level
++        if (batteryState.attribution != null) {
++            attribution.drawable = batteryState.attribution
++        }
++        setFillInsets(batteryState.hasForegroundContent())
++        updateColorProfile(batteryState.hasForegroundContent(), batteryState.color, colors)
++        invalidateSelf()
++    }
++
+ 
+     /**
+      * 把百分比数字按「填充 / 空白」分界线画两遍：
+diff --git a/packages/SystemUI/src/com/android/systemui/clipboardoverlay/ClipboardListener.java b/packages/SystemUI/src/com/android/systemui/clipboardoverlay/ClipboardListener.java
+index 7033e641d..041686823 100644
+--- a/packages/SystemUI/src/com/android/systemui/clipboardoverlay/ClipboardListener.java
++++ b/packages/SystemUI/src/com/android/systemui/clipboardoverlay/ClipboardListener.java
+@@ -84,9 +84,33 @@ public class ClipboardListener implements
+         mClipboardOverlaySuppressionController = clipboardOverlaySuppressionController;
+     }
+ 
++    // XZ1C: the selection toolbar's Translate / Big Bang buttons copy the selection to hand it
++    // over; that copy should not show the clipboard preview. The app announces it just before.
++    private String mXz1cSuppressPackage;
++    private long mXz1cSuppressUntil;
++
+     @Override
+     public void start() {
+         mClipboardManager.addPrimaryClipChangedListener(this);
++        mContext.registerReceiver(new android.content.BroadcastReceiver() {
++            @Override
++            public void onReceive(Context context, android.content.Intent intent) {
++                String sender = getSentFromPackage();
++                if (sender == null) return;
++                mXz1cSuppressPackage = sender;
++                mXz1cSuppressUntil = android.os.SystemClock.uptimeMillis() + 2000;
++            }
++        }, new android.content.IntentFilter("com.xz1c.SUPPRESS_CLIP_OVERLAY"),
++                Context.RECEIVER_EXPORTED);
++    }
++
++    private boolean xz1cConsumeSuppression(String clipSource) {
++        boolean match = mXz1cSuppressPackage != null
++                && mXz1cSuppressPackage.equals(clipSource)
++                && android.os.SystemClock.uptimeMillis() < mXz1cSuppressUntil;
++        // Some apps write the clipboard twice for one Copy (e.g. Compose text and HTML),
++        // so the whole two-second window is suppressed rather than a single change.
++        return match;
+     }
+ 
+     @Override
+@@ -96,6 +120,10 @@ public class ClipboardListener implements
+         }
+ 
+         String clipSource = mClipboardManager.getPrimaryClipSource();
++        if (xz1cConsumeSuppression(clipSource)) {
++            Log.i(TAG, "Clipboard overlay suppressed (selection toolbar hand-over).");
++            return;
++        }
+         ClipData clipData = mClipboardManager.getPrimaryClip();
+ 
+         if (overrideSuppressOverlayCondition()) {
+diff --git a/packages/SystemUI/src/com/android/systemui/keyguard/KeyguardSliceProvider.java b/packages/SystemUI/src/com/android/systemui/keyguard/KeyguardSliceProvider.java
+index 3b85b5710..0b5d1d044 100644
+--- a/packages/SystemUI/src/com/android/systemui/keyguard/KeyguardSliceProvider.java
++++ b/packages/SystemUI/src/com/android/systemui/keyguard/KeyguardSliceProvider.java
+@@ -112,6 +112,16 @@ public class KeyguardSliceProvider extends SliceProvider implements
+     protected final Uri mAlarmUri;
+     protected final Uri mDndUri;
+     protected final Uri mMediaUri;
++    // XZ1C: lunar date / weather line (Xz1cKeyguardInfo)
++    private final android.database.ContentObserver mXz1cObserver =
++            new android.database.ContentObserver(new Handler(android.os.Looper.getMainLooper())) {
++                @Override
++                public void onChange(boolean selfChange) {
++                    synchronized (KeyguardSliceProvider.this) {
++                        updateClockLocked();
++                    }
++                }
++            };
+     private final Date mCurrentTime = new Date();
+     private final Handler mHandler;
+     private final Handler mMediaHandler;
+@@ -124,7 +134,7 @@ public class KeyguardSliceProvider extends SliceProvider implements
+     public ZenModeController mZenModeController;
+     private String mDatePattern;
+     private DateFormat mDateFormat;
+-    private String mLastText;
++    private CharSequence mLastText;
+     private boolean mRegistered;
+     private String mNextAlarm;
+     @Inject
+@@ -342,6 +352,10 @@ public class KeyguardSliceProvider extends SliceProvider implements
+             KeyguardSliceProvider.sInstance = this;
+             registerClockUpdate();
+             updateClockLocked();
++            for (Uri uri : Xz1cKeyguardInfo.OBSERVED) {
++                getContext().getContentResolver().registerContentObserver(uri, false,
++                        mXz1cObserver, android.os.UserHandle.USER_ALL);
++            }
+         }
+         return true;
+     }
+@@ -358,6 +372,7 @@ public class KeyguardSliceProvider extends SliceProvider implements
+                 mKeyguardUpdateMonitor.removeCallback(mKeyguardUpdateMonitorCallback);
+                 getContext().unregisterReceiver(mIntentReceiver);
+             }
++            getContext().getContentResolver().unregisterContentObserver(mXz1cObserver);
+             KeyguardSliceProvider.sInstance = null;
+         }
+     }
+@@ -426,14 +441,14 @@ public class KeyguardSliceProvider extends SliceProvider implements
+     }
+ 
+     protected void updateClockLocked() {
+-        final String text = getFormattedDateLocked();
+-        if (!text.equals(mLastText)) {
++        final CharSequence text = getFormattedDateLocked();
++        if (!TextUtils.equals(text, mLastText)) {
+             mLastText = text;
+             notifyChange();
+         }
+     }
+ 
+-    protected String getFormattedDateLocked() {
++    protected CharSequence getFormattedDateLocked() {
+         if (mDateFormat == null) {
+             final Locale l = Locale.getDefault();
+             DateFormat format = DateFormat.getInstanceForSkeleton(mDatePattern, l);
+@@ -445,7 +460,16 @@ public class KeyguardSliceProvider extends SliceProvider implements
+             mDateFormat = format;
+         }
+         mCurrentTime.setTime(System.currentTimeMillis());
+-        return mDateFormat.format(mCurrentTime);
++        // XZ1C: the weather goes on a second line of the date item; a sibling row would sit
++        // beside the date on the same horizontal line and get ellipsized.
++        CharSequence weather = Xz1cKeyguardInfo.weatherLine(getContext().getContentResolver());
++        android.text.SpannableStringBuilder text = new android.text.SpannableStringBuilder(
++                mDateFormat.format(mCurrentTime)
++                + Xz1cKeyguardInfo.lunarSuffix(getContext().getContentResolver(), mCurrentTime));
++        if (weather != null) {
++            text.append('\n').append(weather);  // keeps the AQI colour span
++        }
++        return text;
+     }
+ 
+     @VisibleForTesting
+diff --git a/packages/SystemUI/src/com/android/systemui/keyguard/Xz1cKeyguardInfo.java b/packages/SystemUI/src/com/android/systemui/keyguard/Xz1cKeyguardInfo.java
+index e70f86803..fb282895e 100644
+--- a/packages/SystemUI/src/com/android/systemui/keyguard/Xz1cKeyguardInfo.java
++++ b/packages/SystemUI/src/com/android/systemui/keyguard/Xz1cKeyguardInfo.java
+@@ -319,7 +319,7 @@ final class Xz1cKeyguardInfo {
+             }
+         }
+         if (f.length > 9 && !f[9].isEmpty() && enabled(cr, SETTING_UV)) {
+-            // sun icon coloured by WHO UV band instead of "UV" letters (user, 2026-10-15)
++            // Emoji-style UV shield by WHO band; keep its index in the text colour.
+             long uv = Math.round(Double.parseDouble(f[9]));
+             sb.append(" · ").append((char) (WX_UV + uvLevel(uv))).append(uv);
+         }
+diff --git a/packages/SystemUI/src/com/android/systemui/media/controls/ui/animation/ColorSchemeTransition.kt b/packages/SystemUI/src/com/android/systemui/media/controls/ui/animation/ColorSchemeTransition.kt
+index 21407f3bd..efc16cc0c 100644
+--- a/packages/SystemUI/src/com/android/systemui/media/controls/ui/animation/ColorSchemeTransition.kt
++++ b/packages/SystemUI/src/com/android/systemui/media/controls/ui/animation/ColorSchemeTransition.kt
+@@ -23,6 +23,7 @@ import android.content.Context
+ import android.content.res.ColorStateList
+ import android.content.res.Configuration
+ import android.content.res.Configuration.UI_MODE_NIGHT_YES
++import android.graphics.Color
+ import android.graphics.drawable.RippleDrawable
+ import com.android.internal.R
+ import com.android.internal.annotations.VisibleForTesting
+@@ -68,6 +69,10 @@ open class AnimatingColorTransition(
+ 
+     override fun updateColorScheme(scheme: ColorScheme?): Boolean {
+         val newTargetColor = if (scheme == null) defaultColor else extractColor(scheme)
++        return updateTargetColor(newTargetColor)
++    }
++
++    fun updateTargetColor(newTargetColor: Int): Boolean {
+         if (newTargetColor != targetColor) {
+             sourceColor = currentColor
+             targetColor = newTargetColor
+@@ -232,7 +237,18 @@ internal constructor(
+         return Utils.getColorAttr(context, id).defaultColor
+     }
+ 
+-    fun updateColorScheme(colorScheme: ColorScheme?): Boolean {
++    @JvmOverloads
++    fun updateColorScheme(colorScheme: ColorScheme?, appleTvRemote: Boolean = false): Boolean {
++        if (appleTvRemote) {
++            // translucent dark, the lock-screen wallpaper shows through (XZ1C Apple TV card)
++            val colors = intArrayOf(0xb8161719.toInt(), 0xff292929.toInt(), Color.WHITE, Color.LTGRAY,
++                Color.WHITE, Color.BLACK, Color.LTGRAY, 0xff666666.toInt())
++            var changed = false
++            colorTransitions.forEachIndexed { index, transition ->
++                changed = transition.updateTargetColor(colors[index]) || changed
++            }
++            return changed
++        }
+         var anyChanged = false
+         colorTransitions.forEach {
+             val isChanged = it.updateColorScheme(colorScheme)
+diff --git a/packages/SystemUI/src/com/android/systemui/media/controls/ui/binder/MediaControlViewBinder.kt b/packages/SystemUI/src/com/android/systemui/media/controls/ui/binder/MediaControlViewBinder.kt
+index 910d3a84a..155e8e60d 100644
+--- a/packages/SystemUI/src/com/android/systemui/media/controls/ui/binder/MediaControlViewBinder.kt
++++ b/packages/SystemUI/src/com/android/systemui/media/controls/ui/binder/MediaControlViewBinder.kt
+@@ -441,7 +441,7 @@ object MediaControlViewBinder {
+                         }
+                     }
+             val artwork =
+-                wallpaperColors?.let {
++                (if (viewModel.isAppleTvRemote) null else wallpaperColors)?.let {
+                     addGradientToPlayerAlbum(
+                         viewHolder.albumView.context,
+                         viewModel.backgroundCover!!,
+@@ -453,7 +453,7 @@ object MediaControlViewBinder {
+             withContext(mainDispatcher) {
+                 // Transition Colors to current color scheme
+                 val colorSchemeChanged =
+-                    viewController.colorSchemeTransition.updateColorScheme(scheme)
++                    viewController.colorSchemeTransition.updateColorScheme(scheme, viewModel.isAppleTvRemote)
+                 val albumView = viewHolder.albumView
+ 
+                 // Set up width of album view constraint.
+@@ -500,6 +500,7 @@ object MediaControlViewBinder {
+                     )
+                     viewHolder.appIcon.setImageIcon(viewModel.appIcon)
+                 }
++                viewHolder.appIcon.alpha = if (viewModel.isAppleTvRemote) 0f else 1f
+                 Trace.endAsyncSection(traceName, traceCookie)
+             }
+         }
+diff --git a/packages/SystemUI/src/com/android/systemui/media/controls/ui/controller/MediaControlPanel.java b/packages/SystemUI/src/com/android/systemui/media/controls/ui/controller/MediaControlPanel.java
+index 4ee65382a..2a713dc39 100644
+--- a/packages/SystemUI/src/com/android/systemui/media/controls/ui/controller/MediaControlPanel.java
++++ b/packages/SystemUI/src/com/android/systemui/media/controls/ui/controller/MediaControlPanel.java
+@@ -109,6 +109,7 @@ import com.android.systemui.media.controls.ui.animation.MetadataAnimationHandler
+ import com.android.systemui.media.controls.ui.binder.SeekBarObserver;
+ import com.android.systemui.media.controls.ui.view.GutsViewHolder;
+ import com.android.systemui.media.controls.ui.view.MediaViewHolder;
++import com.android.systemui.media.controls.ui.view.Xz1cAppleTvCard;
+ import com.android.systemui.media.controls.ui.view.RecommendationViewHolder;
+ import com.android.systemui.media.controls.ui.viewmodel.SeekBarViewModel;
+ import com.android.systemui.media.controls.util.MediaDataUtils;
+@@ -224,6 +225,7 @@ public class MediaControlPanel {
+     private MediaData mMediaData;
+     private SmartspaceMediaData mRecommendationData;
+     private MediaViewController mMediaViewController;
++    private Xz1cAppleTvCard mAppleTvCard;
+     private MediaSession.Token mToken;
+     private MediaController mController;
+     private Lazy<MediaDataManager> mMediaDataManagerLazy;
+@@ -466,6 +468,12 @@ public class MediaControlPanel {
+         mSeekBarViewModel.attachTouchHandlers(vh.getSeekBar());
+         mSeekBarViewModel.setScrubbingChangeListener(mScrubbingChangeListener);
+         mSeekBarViewModel.setEnabledChangeListener(mEnabledChangeListener);
++        // XZ1C: the Apple TV remote's iPhone-style card; MediaViewController shows it only for that
++        mAppleTvCard = new Xz1cAppleTvCard(mContext);
++        mAppleTvCard.setId(R.id.xz1c_appletv_card);
++        mAppleTvCard.setVisibility(View.GONE);
++        player.addView(mAppleTvCard,
++                new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(0, 0));
+         mMediaViewController.attach(player, MediaViewController.TYPE.PLAYER);
+ 
+         vh.getPlayer().setOnLongClickListener(v -> {
+@@ -544,6 +552,11 @@ public class MediaControlPanel {
+     }
+ 
+     /** Bind this player view based on the data given. */
++    private static boolean isXz1cAppleTvRemote(MediaData data) {
++        return "com.xz1c.aircast".equals(data.getPackageName())
++                && "Apple TV".contentEquals(data.getArtist() == null ? "" : data.getArtist());
++    }
++
+     public void bindPlayer(@NonNull MediaData data, String key) {
+         SceneContainerFlag.assertInLegacyMode();
+         if (mMediaViewHolder == null) {
+@@ -612,6 +625,16 @@ public class MediaControlPanel {
+             });
+         }
+ 
++        // XZ1C: the Apple TV remote gets its own card; tapping it or "remote" opens the remote,
++        // "tv" opens the output switcher, like the regular player's tap and chip
++        final boolean appleTvRemote = isXz1cAppleTvRemote(data);
++        mMediaViewController.setAppleTvRemote(appleTvRemote);
++        if (mAppleTvCard != null) {
++            mAppleTvCard.bind(appleTvRemote ? mController : null, data.getSong(),
++                    () -> mMediaViewHolder.getPlayer().performClick(),
++                    () -> mMediaViewHolder.getSeamless().performClick());
++        }
++
+         // Seek Bar
+         if (data.getResumption() && data.getResumeProgress() != null) {
+             double progress = data.getResumeProgress();
+@@ -914,7 +937,9 @@ public class MediaControlPanel {
+             Drawable artwork;
+             boolean isArtworkBound;
+             Icon artworkIcon = data.getArtwork();
+-            WallpaperColors wallpaperColors = getWallpaperColor(artworkIcon);
++            final boolean appleTvRemote = "com.xz1c.aircast".equals(data.getPackageName())
++                    && "Apple TV".contentEquals(data.getArtist() == null ? "" : data.getArtist());
++            WallpaperColors wallpaperColors = appleTvRemote ? null : getWallpaperColor(artworkIcon);
+             if (wallpaperColors != null) {
+                 mutableColorScheme = new ColorScheme(wallpaperColors, true, Style.CONTENT);
+                 artwork = addGradientToPlayerAlbum(artworkIcon, mutableColorScheme, finalWidth,
+@@ -944,7 +969,7 @@ public class MediaControlPanel {
+                 mArtworkBoundId = reqId;
+ 
+                 // Transition Colors to current color scheme
+-                boolean colorSchemeChanged = mColorSchemeTransition.updateColorScheme(colorScheme);
++                boolean colorSchemeChanged = mColorSchemeTransition.updateColorScheme(colorScheme, appleTvRemote);
+ 
+                 // Bind the album view to the artwork or a transition drawable
+                 ImageView albumView = mMediaViewHolder.getAlbumView();
+@@ -978,6 +1003,7 @@ public class MediaControlPanel {
+                 // App icon - use notification icon
+                 ImageView appIconView = mMediaViewHolder.getAppIcon();
+                 appIconView.clearColorFilter();
++                appIconView.setAlpha(appleTvRemote ? 0f : 1f);
+                 if (data.getAppIcon() != null && !data.getResumption()) {
+                     appIconView.setImageIcon(data.getAppIcon());
+                     appIconView.setColorFilter(
+diff --git a/packages/SystemUI/src/com/android/systemui/media/controls/ui/controller/MediaViewController.kt b/packages/SystemUI/src/com/android/systemui/media/controls/ui/controller/MediaViewController.kt
+index 3928a711f..1c1e4e6c7 100644
+--- a/packages/SystemUI/src/com/android/systemui/media/controls/ui/controller/MediaViewController.kt
++++ b/packages/SystemUI/src/com/android/systemui/media/controls/ui/controller/MediaViewController.kt
+@@ -401,6 +401,48 @@ constructor(
+     private fun constraintSetForExpansion(expansion: Float): ConstraintSet =
+         if (expansion > 0) expandedLayout else collapsedLayout
+ 
++    /** XZ1C: the Apple TV remote's card (Xz1cAppleTvCard) replaces the player's contents. */
++    var appleTvRemote = false
++        set(value) {
++            if (field != value) {
++                field = value
++                refreshState()
++            }
++        }
++
++    /**
++     * XZ1C: for the Apple TV remote, everything but the background (and the long-press guts)
++     * is gone and the card fills the player; for any other media the card is gone.
++     */
++    private fun xz1cAppleTvConstraints(base: ConstraintSet): ConstraintSet {
++        if (type != TYPE.PLAYER) return base
++        val card = R.id.xz1c_appletv_card
++        val set = ConstraintSet().apply { clone(base) }
++        if (!appleTvRemote || isGutsVisible) {
++            set.setVisibility(card, ConstraintSet.GONE)
++            return set
++        }
++        // every other child (not only those the XML sets constrain: the app icon and the output
++        // chip are not in them); album_art stays laid out for the player height but is invisible,
++        // the card draws its own translucent background
++        val keep = MediaViewHolder.backgroundIds + GutsViewHolder.ids + card
++        val ids = set.knownIds.toMutableSet()
++        transitionLayout?.let { layout ->
++            for (i in 0 until layout.childCount) ids.add(layout.getChildAt(i).id)
++        }
++        ids.filter { it != View.NO_ID && it !in keep }.forEach { set.setVisibility(it, ConstraintSet.GONE) }
++        set.setAlpha(R.id.album_art, 0f)
++        set.constrainWidth(card, ConstraintSet.MATCH_CONSTRAINT)
++        set.constrainHeight(card, ConstraintSet.MATCH_CONSTRAINT)
++        set.connect(card, ConstraintSet.START, ConstraintSet.PARENT_ID, ConstraintSet.START)
++        set.connect(card, ConstraintSet.END, ConstraintSet.PARENT_ID, ConstraintSet.END)
++        set.connect(card, ConstraintSet.TOP, ConstraintSet.PARENT_ID, ConstraintSet.TOP)
++        set.connect(card, ConstraintSet.BOTTOM, ConstraintSet.PARENT_ID, ConstraintSet.BOTTOM)
++        set.setVisibility(card, ConstraintSet.VISIBLE)
++        set.setAlpha(card, 1f)
++        return set
++    }
++
+     /** Set the height of UMO background constraints. */
+     private fun setBackgroundHeights(height: Int) {
+         val backgroundIds =
+@@ -605,7 +647,7 @@ constructor(
+             result =
+                 transitionLayout!!.calculateViewState(
+                     state.measurementInput!!,
+-                    constraintSetForExpansion(state.expansion),
++                    xz1cAppleTvConstraints(constraintSetForExpansion(state.expansion)),
+                     TransitionViewState(),
+                 )
+ 
+diff --git a/packages/SystemUI/src/com/android/systemui/media/controls/ui/viewmodel/MediaControlViewModel.kt b/packages/SystemUI/src/com/android/systemui/media/controls/ui/viewmodel/MediaControlViewModel.kt
+index 4e97f2015..6e2689cfe 100644
+--- a/packages/SystemUI/src/com/android/systemui/media/controls/ui/viewmodel/MediaControlViewModel.kt
++++ b/packages/SystemUI/src/com/android/systemui/media/controls/ui/viewmodel/MediaControlViewModel.kt
+@@ -128,6 +128,7 @@ class MediaControlViewModel(
+             backgroundCover = model.artwork,
+             appIcon = model.appIcon,
+             launcherIcon = getIconFromApp(model.packageName),
++            isAppleTvRemote = model.packageName == "com.xz1c.aircast" && model.artistName == "Apple TV",
+             useGrayColorFilter = model.appIcon == null || model.isResume,
+             artistName = model.artistName ?: "",
+             titleName = model.songName ?: "",
+diff --git a/packages/SystemUI/src/com/android/systemui/media/controls/ui/viewmodel/MediaPlayerViewModel.kt b/packages/SystemUI/src/com/android/systemui/media/controls/ui/viewmodel/MediaPlayerViewModel.kt
+index 4aae72fb3..7a399d3e6 100644
+--- a/packages/SystemUI/src/com/android/systemui/media/controls/ui/viewmodel/MediaPlayerViewModel.kt
++++ b/packages/SystemUI/src/com/android/systemui/media/controls/ui/viewmodel/MediaPlayerViewModel.kt
+@@ -40,10 +40,12 @@ data class MediaPlayerViewModel(
+     val onSeek: () -> Unit,
+     val onBindSeekbar: (SeekBarViewModel) -> Unit,
+     val onLocationChanged: (Int) -> Unit,
++    val isAppleTvRemote: Boolean = false,
+ ) {
+     fun contentEquals(other: MediaPlayerViewModel?): Boolean {
+         return other?.let {
+-            other.backgroundCover == backgroundCover &&
++            other.isAppleTvRemote == isAppleTvRemote &&
++                other.backgroundCover == backgroundCover &&
+                 appIcon == other.appIcon &&
+                 useGrayColorFilter == other.useGrayColorFilter &&
+                 artistName == other.artistName &&
+diff --git a/services/core/java/com/android/server/am/ActiveServices.java b/services/core/java/com/android/server/am/ActiveServices.java
+index 60516c39f..b6098f3ad 100644
+--- a/services/core/java/com/android/server/am/ActiveServices.java
++++ b/services/core/java/com/android/server/am/ActiveServices.java
+@@ -972,6 +972,19 @@ public final class ActiveServices {
+ 
+         ServiceRecord r = res.record;
+ 
++        if (r.appInfo != null) {
++            final boolean callerSys = (caller == null)
++                    || (callingUid < android.os.Process.FIRST_APPLICATION_UID);
++            final int targetState = mAm.getUidStateLocked(r.appInfo.uid);
++            if (SmartFreezeController.shouldBlockChainWakeup(mAm.mContext,
++                    callingUid, callingPackage, callerSys,
++                    r.appInfo.uid, r.packageName, targetState,
++                    "startService", r.shortInstanceName)) {
++                return null;
++            }
++            SmartFreezeController.thawByUid(r.appInfo.uid, "startService:" + r.shortInstanceName);
++        }
++
+         traceInstant("startService(): ", r);
+ 
+         // Note, when startService() or startForegroundService() is called on an already
+@@ -4174,6 +4187,18 @@ public final class ActiveServices {
+             return -1;
+         }
+         ServiceRecord s = res.record;
++        if (s.appInfo != null) {
++            final boolean callerSysBind = isCallerSystem
++                    || (callerApp != null && callerApp.info != null && callerApp.info.isSystemApp());
++            final int targetState = mAm.getUidStateLocked(s.appInfo.uid);
++            if (SmartFreezeController.shouldBlockChainWakeup(mAm.mContext,
++                    callingUid, callingPackage, callerSysBind,
++                    s.appInfo.uid, s.packageName, targetState,
++                    "bindService", s.shortInstanceName)) {
++                return 0;
++            }
++            SmartFreezeController.thawByUid(s.appInfo.uid, "bindService:" + s.shortInstanceName);
++        }
+         final AppBindRecord b = s.retrieveAppBindingLocked(service, callerApp, attributedApp);
+         final ProcessServiceRecord clientPsr = b.client.mServices;
+         if (clientPsr.numberOfConnections() >= mAm.mConstants.mMaxServiceConnectionsPerProcess) {
+diff --git a/services/core/java/com/android/server/am/BroadcastController.java b/services/core/java/com/android/server/am/BroadcastController.java
+index 71ea74970..10e85710f 100644
+--- a/services/core/java/com/android/server/am/BroadcastController.java
++++ b/services/core/java/com/android/server/am/BroadcastController.java
+@@ -1509,8 +1509,8 @@ class BroadcastController {
+         if ((intent.getFlags() & Intent.FLAG_RECEIVER_REGISTERED_ONLY) == 0) {
+             receivers = collectReceiverComponents(
+                     intent, resolvedType, callingUid, callingPid, users, broadcastAllowList);
+-            // 【本项目】自启动管理：按用户名单拦掉开机广播，见 filterAutoStartBlocked
+-            receivers = filterAutoStartBlocked(intent, receivers);
++            // 【本项目】自启动管理：按用户名单拦掉开机广播与跨应用链式唤醒广播
++            receivers = filterAutoStartBlocked(intent, receivers, callingUid);
+         }
+         if (intent.getComponent() == null) {
+             final PackageDataSnapshot snapshot = mService.getPackageManagerInternal().snapshot();
+@@ -1965,13 +1965,16 @@ class BroadcastController {
+      * 不原地删除传入的 list —— collectReceiverComponents 的返回值可能来自
+      * PackageManager 的内部缓存，改它会污染别处。命中时新建一个 list 返回。
+      */
+-    private List filterAutoStartBlocked(Intent intent, List receivers) {
++    private List filterAutoStartBlocked(Intent intent, List receivers, int callingUid) {
+         if (receivers == null || receivers.isEmpty()) {
+             return receivers;
+         }
+         final String action = intent.getAction();
+-        if (!Intent.ACTION_BOOT_COMPLETED.equals(action)
+-                && !Intent.ACTION_LOCKED_BOOT_COMPLETED.equals(action)) {
++        final boolean isBoot = Intent.ACTION_BOOT_COMPLETED.equals(action)
++                || Intent.ACTION_LOCKED_BOOT_COMPLETED.equals(action);
++        final boolean isThirdPartyCaller =
++                UserHandle.getAppId(callingUid) >= Process.FIRST_APPLICATION_UID;
++        if (!isBoot && !isThirdPartyCaller) {
+             return receivers;
+         }
+ 
+@@ -2016,7 +2019,16 @@ class BroadcastController {
+                 final ResolveInfo ri = (ResolveInfo) o;
+                 if (ri.activityInfo != null
+                         && blocked.contains(ri.activityInfo.packageName)) {
+-                    drop = true;
++                    if (isBoot) {
++                        drop = true;
++                    } else if (ri.activityInfo.applicationInfo != null
++                            && ri.activityInfo.applicationInfo.uid != callingUid) {
++                        final int targetState = mService.getUidStateLocked(
++                                ri.activityInfo.applicationInfo.uid);
++                        if (targetState > ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE) {
++                            drop = true;
++                        }
++                    }
+                 }
+             }
+             if (drop) {
+diff --git a/services/core/java/com/android/server/am/BroadcastQueueModernImpl.java b/services/core/java/com/android/server/am/BroadcastQueueModernImpl.java
+index 9e4666cca..cf120891e 100644
+--- a/services/core/java/com/android/server/am/BroadcastQueueModernImpl.java
++++ b/services/core/java/com/android/server/am/BroadcastQueueModernImpl.java
+@@ -1105,6 +1105,10 @@ class BroadcastQueueModernImpl extends BroadcastQueue {
+         if (app != null && app.isInFullBackup()) {
+             return "isInFullBackup";
+         }
++        if (SmartFreezeController.shouldSkipBroadcastForFrozenProcess(
++                mService.mContext, app, r)) {
++            return "SmartFrozen process skipped background broadcast";
++        }
+         final String skipReason = mSkipPolicy.shouldSkipMessage(r, receiver);
+         if (skipReason != null) {
+             return skipReason;
+@@ -1180,6 +1184,9 @@ class BroadcastQueueModernImpl extends BroadcastQueue {
+         setDeliveryState(queue, app, r, index, receiver, BroadcastRecord.DELIVERY_SCHEDULED,
+                 "scheduleReceiverWarmLocked");
+ 
++        if (app != null) {
++            SmartFreezeController.thawByUid(app.uid, "broadcastDispatch");
++        }
+         final Intent receiverIntent = r.getReceiverIntent(receiver);
+         final IApplicationThread thread = app.getOnewayThread();
+         if (thread != null) {
+diff --git a/services/core/java/com/android/server/am/ContentProviderHelper.java b/services/core/java/com/android/server/am/ContentProviderHelper.java
+index 6e09a84e0..d2df2e820 100644
+--- a/services/core/java/com/android/server/am/ContentProviderHelper.java
++++ b/services/core/java/com/android/server/am/ContentProviderHelper.java
+@@ -310,6 +310,23 @@ public class ContentProviderHelper {
+                 checkAssociationAndPermissionLocked(r, cpi, callingUid, userId, checkCrossUser,
+                         cpr.name.flattenToShortString(), startTime);
+ 
++                if (cpi != null && cpi.applicationInfo != null) {
++                    final boolean callerSys = (r == null)
++                            || (r.info != null && r.info.isSystemApp())
++                            || (callingUid < Process.FIRST_APPLICATION_UID);
++                    if (name == null || !name.toLowerCase().contains("fileprovider")) {
++                        if (SmartFreezeController.shouldBlockChainWakeup(mService.mContext,
++                                callingUid, callingPackage, callerSys,
++                                cpi.applicationInfo.uid, cpi.packageName,
++                                cpr.proc.mState.getCurProcState(),
++                                "getContentProvider(running)", String.valueOf(name))) {
++                            return null;
++                        }
++                    }
++                    SmartFreezeController.thawByUid(
++                            cpi.applicationInfo.uid, "getContentProvider:" + name);
++                }
++
+                 final int providerProcessState = cpr.proc.mState.getCurProcState();
+ 
+                 final long origId = Binder.clearCallingIdentity();
+@@ -408,6 +425,23 @@ public class ContentProviderHelper {
+                 checkAssociationAndPermissionLocked(r, cpi, callingUid, userId, !singleton,
+                         name, startTime);
+ 
++                if (cpi.applicationInfo != null) {
++                    final boolean callerSys = (r == null)
++                            || (r.info != null && r.info.isSystemApp())
++                            || (callingUid < Process.FIRST_APPLICATION_UID);
++                    if (name == null || !name.toLowerCase().contains("fileprovider")) {
++                        final int targetState = mService.getUidStateLocked(cpi.applicationInfo.uid);
++                        if (SmartFreezeController.shouldBlockChainWakeup(mService.mContext,
++                                callingUid, callingPackage, callerSys,
++                                cpi.applicationInfo.uid, cpi.packageName, targetState,
++                                "getContentProvider(cold)", String.valueOf(name))) {
++                            return null;
++                        }
++                    }
++                    SmartFreezeController.thawByUid(
++                            cpi.applicationInfo.uid, "getContentProviderCold:" + name);
++                }
++
+                 if (!mService.mProcessesReady && !cpi.processName.equals("system")) {
+                     // If this content provider does not run in the system
+                     // process, and the system is not yet ready to run other
+diff --git a/services/core/java/com/android/server/am/ProcessRecord.java b/services/core/java/com/android/server/am/ProcessRecord.java
+index 98f738c38..0dee9606f 100644
+--- a/services/core/java/com/android/server/am/ProcessRecord.java
++++ b/services/core/java/com/android/server/am/ProcessRecord.java
+@@ -1294,6 +1294,7 @@ class ProcessRecord implements WindowProcessListener {
+             mOptRecord.setPendingFreeze(false);
+             mOptRecord.setFrozen(false);
+             if (mPid > 0) {
++                SmartFreezeController.thawPid(mPid);
+                 mService.mProcessList.noteAppKill(this, reasonCode, subReason, description);
+                 EventLog.writeEvent(EventLogTags.AM_KILL,
+                         userId, mPid, processName, mState.getSetAdj(), reason, getRss(mPid));
+diff --git a/services/core/java/com/android/server/audio/AudioService.java b/services/core/java/com/android/server/audio/AudioService.java
+index ac137248a..7a1793e9b 100644
+--- a/services/core/java/com/android/server/audio/AudioService.java
++++ b/services/core/java/com/android/server/audio/AudioService.java
+@@ -1914,6 +1914,12 @@ public class AudioService extends IAudioService.Stub
+ 
+     void onIndicateSystemReady() {
+         if (AudioSystem.systemReady() == AudioSystem.SUCCESS) {
++            // xz1c: Qualcomm HALs only follow the stream's native sample rate on the headphone
++            // backend ("native_audio_mode" in audio_platform_info.xml) once this HAL parameter is
++            // set; nothing else sends it on LineageOS. Runs again when audioserver restarts.
++            if (SystemProperties.getBoolean("ro.xz1c.audio.native_codec", false)) {
++                AudioSystem.setParameters("audio.nat.codec.enabled=true");
++            }
+             return;
+         }
+         sendMsg(mAudioHandler,
+diff --git a/services/core/java/com/android/server/policy/PhoneWindowManager.java b/services/core/java/com/android/server/policy/PhoneWindowManager.java
+index cdafae336..ef37ba0a1 100644
+--- a/services/core/java/com/android/server/policy/PhoneWindowManager.java
++++ b/services/core/java/com/android/server/policy/PhoneWindowManager.java
+@@ -7152,6 +7152,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
+             boolean withProximityCheck) {
+         if (mWindowWakeUpPolicy.wakeUpFromKey(DEFAULT_DISPLAY, eventTime, keyCode, isDown,
+                 withProximityCheck)) {
++            // XZ1C: double tap to wake arrives as KEYCODE_WAKEUP (clearpad.kl); confirm it.
++            if (keyCode == KeyEvent.KEYCODE_WAKEUP) {
++                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, "Double tap to wake");
++            }
+             final boolean keyCanLaunchHome = keyCode == KEYCODE_HOME || keyCode == KEYCODE_POWER;
+             // Start HOME with "reason" extra if sleeping for more than mWakeUpToLastStateTimeout
+             if (shouldWakeUpWithHomeIntent() &&  keyCanLaunchHome) {
+diff --git a/services/core/java/com/android/server/wm/ActivityTaskManagerService.java b/services/core/java/com/android/server/wm/ActivityTaskManagerService.java
+index 9777d6ca2..344e0ac47 100644
+--- a/services/core/java/com/android/server/wm/ActivityTaskManagerService.java
++++ b/services/core/java/com/android/server/wm/ActivityTaskManagerService.java
+@@ -394,30 +394,36 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
+      * 用户按 Home 键离开、或直接切走的应用。
+      */
+     private volatile int mBgForceStopTimeoutMin;
++    /** 后台超时秒数（支持 30秒 / 1分钟 / 3分钟 / 5分钟 / 10分钟 / 30分钟），0 = 关。 */
++    private volatile int mBgTimeoutSeconds = 180;
+ 
+     /**
+-     * 后台超时后怎么处理，对应 {@link LineageSettings.System#BG_FORCE_STOP_MODE}。
+-     * 0 = 强制停止（置停止状态，连 FCM 推送也拉不起它）
+-     * 1 = 只杀进程（不置停止状态，FCM 推送仍能唤醒，适合即时通讯）
++     * 后台超时后怎么处理（整合版三合一）：
++     * 0 = 智慧冻结（Cgroup Freezer 挂起，0% CPU，点开 1ms 恢复）
++     * 1 = 强制停止（置停止状态，彻底退出）
++     * 2 = 清理进程（杀进程释放内存，保留系统推送唤醒）
+      */
+-    private volatile int mBgForceStopMode;
++    private volatile int mBgForceStopMode =
++            com.android.server.am.SmartFreezeController.MODE_SMART_FREEZE;
++
++    /** 锁屏 1 分钟后是否自动冻结/清理闲置应用。 */
++    private volatile boolean mBgScreenOffFreeze = true;
+ 
+     /**
+      * 是否顺带清理「无限制」应用的闲置(CACHED)进程，对应
+      * {@link LineageSettings.System#BG_TRIM_CACHED_PROCS}。
+-     * 典型用途：微信设为无限制保住推送，但它的小程序进程闲置时很占内存。
+      */
+     private volatile boolean mBgTrimCachedProcs;
+ 
+-    private static final long BG_SWEEP_INTERVAL_MS = 60_000L;
++    private static final long BG_SWEEP_INTERVAL_MS = 30_000L;
++    private static final long BG_SWEEP_FAST_INTERVAL_MS = 15_000L;
++    private static final long SCREEN_OFF_FREEZE_DELAY_MS = 60_000L;
+ 
+     /** 划掉任务后等进程状态落定再做豁免判定，见 removeTask 里的说明。 */
+     private static final long TASK_REMOVED_FORCE_STOP_DELAY_MS = 1500L;
+ 
+     /**
+      * key = "userId/进程名" -> 进入后台的时刻(elapsedRealtime)。只在后台线程访问。
+-     * 按**进程**而不是按包计时：同一个应用可能有多个进程，
+-     * 「无限制」应用的闲置进程要单独清理（如微信小程序），必须精确到进程。
+      */
+     private final ArrayMap<String, Long> mBgSince = new ArrayMap<>();
+ 
+@@ -427,9 +433,20 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
+     private final Runnable mBgSweepRunnable = new Runnable() {
+         @Override
+         public void run() {
+-            sweepBackgroundApps();
+-            if (mBgForceStopTimeoutMin > 0) {
+-                mBgSweepHandler.postDelayed(this, BG_SWEEP_INTERVAL_MS);
++            sweepBackgroundApps(false);
++            final int sec = mBgTimeoutSeconds;
++            if (sec > 0) {
++                mBgSweepHandler.postDelayed(this,
++                        sec <= 30 ? BG_SWEEP_FAST_INTERVAL_MS : BG_SWEEP_INTERVAL_MS);
++            }
++        }
++    };
++
++    private final Runnable mBgScreenOffRunnable = new Runnable() {
++        @Override
++        public void run() {
++            if (mBgScreenOffFreeze) {
++                sweepBackgroundApps(true);
+             }
+         }
+     };
+@@ -880,6 +897,16 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
+                 LineageSettings.System.BG_FORCE_STOP_MODE);
+         private final Uri mBgTrimCachedProcsUri = LineageSettings.System.getUriFor(
+                 LineageSettings.System.BG_TRIM_CACHED_PROCS);
++        private final Uri mBgTimeoutSecondsUri = Settings.Global.getUriFor(
++                com.android.server.am.SmartFreezeController.SETTING_BG_TIMEOUT_SECONDS);
++        private final Uri mBgControlModeUri = Settings.Global.getUriFor(
++                com.android.server.am.SmartFreezeController.SETTING_BG_CONTROL_MODE);
++        private final Uri mBgScreenOffFreezeUri = Settings.Global.getUriFor(
++                com.android.server.am.SmartFreezeController.SETTING_BG_SCREEN_OFF_FREEZE);
++        private final Uri mBgFreezeCmdUri = Settings.Global.getUriFor(
++                com.android.server.am.SmartFreezeController.SETTING_BG_FREEZE_CMD);
++        private final Uri mAutostartBlockedUri = Settings.Global.getUriFor(
++                com.android.server.am.SmartFreezeController.SETTING_AUTOSTART_BLOCKED_PACKAGES);
+ 
+         SettingObserver() {
+             super(mH);
+@@ -897,6 +924,16 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
+                     mBgForceStopModeUri, false, this, UserHandle.USER_ALL);
+             resolver.registerContentObserver(
+                     mBgTrimCachedProcsUri, false, this, UserHandle.USER_ALL);
++            resolver.registerContentObserver(
++                    mBgTimeoutSecondsUri, false, this, UserHandle.USER_ALL);
++            resolver.registerContentObserver(
++                    mBgControlModeUri, false, this, UserHandle.USER_ALL);
++            resolver.registerContentObserver(
++                    mBgScreenOffFreezeUri, false, this, UserHandle.USER_ALL);
++            resolver.registerContentObserver(
++                    mBgFreezeCmdUri, false, this, UserHandle.USER_ALL);
++            resolver.registerContentObserver(
++                    mAutostartBlockedUri, false, this, UserHandle.USER_ALL);
+         }
+ 
+         @Override
+@@ -915,8 +952,15 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
+                     updateSwipeAwayForceStop();
+                 } else if (mBgForceStopTimeoutUri.equals(uri)
+                         || mBgForceStopModeUri.equals(uri)
+-                        || mBgTrimCachedProcsUri.equals(uri)) {
++                        || mBgTrimCachedProcsUri.equals(uri)
++                        || mBgTimeoutSecondsUri.equals(uri)
++                        || mBgControlModeUri.equals(uri)
++                        || mBgScreenOffFreezeUri.equals(uri)) {
+                     updateBgForceStopTimeout();
++                } else if (mBgFreezeCmdUri.equals(uri)) {
++                    handleBgFreezeCmd();
++                } else if (mAutostartBlockedUri.equals(uri)) {
++                    com.android.server.am.SmartFreezeController.refreshBlockedPackages(mContext);
+                 }
+             }
+         }
+@@ -2344,6 +2388,11 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
+      * 判定过程中出任何异常一律当作豁免：判不了就别动它，宁可少杀不可错杀。
+      */
+     private boolean isExemptFromForceStop(String pkg, int userId) {
++        return isExemptFromForceStop(pkg, userId, null);
++    }
++
++    private boolean isExemptFromForceStop(String pkg, int userId,
++            @Nullable Set<Integer> activeAudioUids) {
+         try {
+             final PackageManagerInternal pmInternal;
+             synchronized (mGlobalLock) {
+@@ -2357,15 +2406,28 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
+             if ((ai.flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_PERSISTENT)) != 0) {
+                 return true;
+             }
+-            final PowerExemptionManager pem =
+-                    mContext.getSystemService(PowerExemptionManager.class);
+-            if (pem != null && pem.isAllowListed(pkg, false /* includingIdle */)) {
++            // Iron Rule: active audio playback or recording is ALWAYS exempted
++            if (activeAudioUids != null && activeAudioUids.contains(ai.uid)) {
++                return true;
++            }
++            if (activeAudioUids == null
++                    && com.android.server.am.SmartFreezeController.getActiveAudioUids(mContext)
++                            .contains(ai.uid)) {
+                 return true;
+             }
+             if (mAmInternal.getUidProcessState(ai.uid)
+                     <= ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE) {
+                 return true;
+             }
++            // Battery "Unrestricted" apps (e.g. WeChat) are exempted unless explicitly blocked
++            // in Autostart by user
++            if (!com.android.server.am.SmartFreezeController.isAutoStartBlocked(mContext, pkg)) {
++                final PowerExemptionManager pem =
++                        mContext.getSystemService(PowerExemptionManager.class);
++                if (pem != null && pem.isAllowListed(pkg, false /* includingIdle */)) {
++                    return true;
++                }
++            }
+             final String ime = Settings.Secure.getStringForUser(mContext.getContentResolver(),
+                     Settings.Secure.DEFAULT_INPUT_METHOD, userId);
+             if (ime != null) {
+@@ -2386,54 +2448,150 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
+     }
+ 
+     private void updateBgForceStopTimeout() {
++        final ContentResolver cr = mContext.getContentResolver();
+         int min = 0;
+         try {
+-            min = LineageSettings.System.getIntForUser(mContext.getContentResolver(),
++            min = LineageSettings.System.getIntForUser(cr,
+                     LineageSettings.System.BG_FORCE_STOP_TIMEOUT, 0, UserHandle.USER_CURRENT);
+         } catch (Exception e) {
+             Slog.w(TAG, "read BG_FORCE_STOP_TIMEOUT failed", e);
+         }
+         mBgForceStopTimeoutMin = min;
+-        int mode = 0;
++
++        int timeoutSec = -1;
++        int controlMode = -1;
++        boolean screenOffFreeze = true;
++        try {
++            timeoutSec = Settings.Global.getInt(cr,
++                    com.android.server.am.SmartFreezeController.SETTING_BG_TIMEOUT_SECONDS, -1);
++            controlMode = Settings.Global.getInt(cr,
++                    com.android.server.am.SmartFreezeController.SETTING_BG_CONTROL_MODE, -1);
++            screenOffFreeze = Settings.Global.getInt(cr,
++                    com.android.server.am.SmartFreezeController.SETTING_BG_SCREEN_OFF_FREEZE, 1) != 0;
++        } catch (Exception e) {
++            Slog.w(TAG, "read global bg control settings failed", e);
++        }
++        if (timeoutSec < 0) {
++            timeoutSec = min > 0 ? min * 60 : 180;
++        }
++        mBgTimeoutSeconds = timeoutSec;
++
++        int lineageMode = 0;
+         boolean trim = false;
+         try {
+-            mode = LineageSettings.System.getIntForUser(mContext.getContentResolver(),
++            lineageMode = LineageSettings.System.getIntForUser(cr,
+                     LineageSettings.System.BG_FORCE_STOP_MODE, 0, UserHandle.USER_CURRENT);
+-            trim = LineageSettings.System.getIntForUser(mContext.getContentResolver(),
++            trim = LineageSettings.System.getIntForUser(cr,
+                     LineageSettings.System.BG_TRIM_CACHED_PROCS, 0, UserHandle.USER_CURRENT) != 0;
+         } catch (Exception e) {
+             Slog.w(TAG, "read bg force stop mode failed", e);
+         }
+-        mBgForceStopMode = mode;
++        if (controlMode < 0) {
++            // Default to Smart Freeze (0)
++            controlMode = com.android.server.am.SmartFreezeController.MODE_SMART_FREEZE;
++        }
++        mBgForceStopMode = controlMode;
++        mBgScreenOffFreeze = screenOffFreeze;
+         mBgTrimCachedProcs = trim;
+-        // 计时表只在后台线程碰，重排也放到那条线程上，避免和巡检竞争。
++        com.android.server.am.SmartFreezeController.refreshBlockedPackages(mContext);
++
++        // If timeout is turned off or mode switched away from Smart Freeze, thaw any frozen apps
++        if (timeoutSec <= 0
++                || controlMode != com.android.server.am.SmartFreezeController.MODE_SMART_FREEZE) {
++            mBgSweepHandler.post(() ->
++                    com.android.server.am.SmartFreezeController.thawAll("settingsChanged"));
++        }
++
+         mBgSweepHandler.removeCallbacks(mBgSweepRunnable);
+         mBgSweepHandler.post(() -> {
+             mBgSince.clear();
+-            if (mBgForceStopTimeoutMin > 0) {
+-                mBgSweepHandler.postDelayed(mBgSweepRunnable, BG_SWEEP_INTERVAL_MS);
++            if (mBgTimeoutSeconds > 0) {
++                long interval = mBgTimeoutSeconds <= 30
++                        ? BG_SWEEP_FAST_INTERVAL_MS : BG_SWEEP_INTERVAL_MS;
++                mBgSweepHandler.postDelayed(mBgSweepRunnable, interval);
+             }
+         });
+     }
+ 
++    private void handleBgFreezeCmd() {
++        mBgSweepHandler.post(() -> {
++            try {
++                final ContentResolver cr = mContext.getContentResolver();
++                String cmd = Settings.Global.getString(cr,
++                        com.android.server.am.SmartFreezeController.SETTING_BG_FREEZE_CMD);
++                if (cmd == null || cmd.isEmpty()) {
++                    return;
++                }
++                Settings.Global.putString(cr,
++                        com.android.server.am.SmartFreezeController.SETTING_BG_FREEZE_CMD, "");
++                if (cmd.startsWith("thaw:")) {
++                    String pkg = cmd.substring(5).trim();
++                    com.android.server.am.SmartFreezeController.thawByPackage(pkg, "uiManualThaw");
++                } else if (cmd.startsWith("freeze:")) {
++                    String pkg = cmd.substring(7).trim();
++                    freezePackageProcesses(pkg);
++                } else if (cmd.startsWith("freeze_all")) {
++                    sweepBackgroundApps(true);
++                }
++            } catch (Exception e) {
++                Slog.w(TAG, "handleBgFreezeCmd failed", e);
++            }
++        });
++    }
++
++    private void freezePackageProcesses(String targetPkg) {
++        if (targetPkg == null || targetPkg.isEmpty()) {
++            return;
++        }
++        try {
++            final List<ActivityManager.RunningAppProcessInfo> procs =
++                    ActivityManager.getService().getRunningAppProcesses();
++            if (procs == null) {
++                return;
++            }
++            for (ActivityManager.RunningAppProcessInfo p : procs) {
++                if (p.pkgList == null) continue;
++                for (String pkg : p.pkgList) {
++                    if (targetPkg.equals(pkg)) {
++                        com.android.server.am.SmartFreezeController.freezePid(
++                                p.pid, p.uid, targetPkg);
++                        break;
++                    }
++                }
++            }
++        } catch (Exception e) {
++            Slog.w(TAG, "freezePackageProcesses failed for " + targetPkg, e);
++        }
++    }
++
+     /**
+-     * 每分钟巡检一次：应用进入后台超过设定时长、且不在豁免范围内，就强制停止。
+-     *
+-     * 只靠「划掉最近任务」管不到按 Home 键离开或直接切走的应用，这条补上那部分，
+-     * 效果对齐第三方后台管控工具。判定标准是进程重要度：比「可感知」
+-     * (IMPORTANCE_PERCEPTIBLE) 更重要的一律不碰 —— 前台、前台服务、正在播放的
+-     * 都在这条线以上。
++     * 定时巡检 + 锁屏 1 分钟巡检：
++     * 支持三种模式：
++     *   0 = 智慧冻结（Cgroup Freezer 挂起，0% CPU，点开 1ms 恢复）
++     *   1 = 强制停止（彻底退出）
++     *   2 = 清理进程（杀进程释放内存，保留推送）
++     * 正在播放音频/录音、前台服务、常驻豁免应用自动豁免。
+      */
+-    private void sweepBackgroundApps() {
+-        final int timeoutMin = mBgForceStopTimeoutMin;
+-        if (timeoutMin <= 0) {
++    private void sweepBackgroundApps(boolean isScreenOffSweep) {
++        final int timeoutSec = mBgTimeoutSeconds;
++        if (timeoutSec <= 0 && !isScreenOffSweep) {
+             return;
+         }
+-        final boolean killOnly = mBgForceStopMode == 1;
++        final int mode = mBgForceStopMode;
+         final boolean trimCached = mBgTrimCachedProcs;
+         final long now = SystemClock.elapsedRealtime();
+-        final long limitMs = timeoutMin * 60_000L;
++        final long limitMs = isScreenOffSweep ? 0L : (timeoutSec * 1000L);
+         try {
++            com.android.server.am.SmartFreezeController.pruneDeadFrozenPids();
++            final Set<Integer> activeAudioUids =
++                    com.android.server.am.SmartFreezeController.getActiveAudioUids(mContext);
++            // Safeguard: if any frozen UID is somehow playing audio, thaw it immediately
++            for (Integer audioUid : activeAudioUids) {
++                if (com.android.server.am.SmartFreezeController.isUidFrozen(audioUid)) {
++                    com.android.server.am.SmartFreezeController.thawByUid(audioUid, "audioActive");
++                }
++            }
++
+             final List<ActivityManager.RunningAppProcessInfo> procs =
+                     ActivityManager.getService().getRunningAppProcesses();
+             if (procs == null) {
+@@ -2448,64 +2606,78 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
+                 final String key = userId + "/" + p.processName;
+                 seen.add(key);
+ 
+-                // 比「可感知」更重要的一律不碰：前台、前台服务、正在播放的都在这条线以上。
++                // 只有真正前台可见或正在播放音频才自动解冻；其他感知级后台服务不自动处理；若已被手动冻结则保持冻结
++                if (p.importance
++                        <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
++                        || activeAudioUids.contains(p.uid)) {
++                    mBgSince.remove(key);
++                    if (com.android.server.am.SmartFreezeController.isPidFrozen(p.pid)) {
++                        com.android.server.am.SmartFreezeController.thawPid(p.pid);
++                    }
++                    continue;
++                }
+                 if (p.importance
+                         <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE) {
+                     mBgSince.remove(key);
+                     continue;
+                 }
++
++                // 如果该进程在智慧冻结模式下已经被冻结了，跳过重复处理
++                if (mode == com.android.server.am.SmartFreezeController.MODE_SMART_FREEZE
++                        && com.android.server.am.SmartFreezeController.isPidFrozen(p.pid)) {
++                    continue;
++                }
++
+                 final Long since = mBgSince.get(key);
+-                if (since == null) {
++                if (since == null && !isScreenOffSweep) {
+                     mBgSince.put(key, now);
+                     continue;
+                 }
+-                if (now - since < limitMs) {
++                final long elapsedMs = since != null ? (now - since) : limitMs;
++                if (!isScreenOffSweep && elapsedMs < limitMs) {
+                     continue;
+                 }
+-                final long bgMin = (now - since) / 60_000L;
++                final long bgSec = elapsedMs / 1000L;
+ 
+                 // 一个进程可能同时属于多个包（共享 uid），取第一个不豁免的作为处理对象。
+                 String victimPkg = null;
+                 for (String pkg : p.pkgList) {
+-                    if (!isExemptFromForceStop(pkg, userId)) {
++                    if (!isExemptFromForceStop(pkg, userId, activeAudioUids)) {
+                         victimPkg = pkg;
+                         break;
+                     }
+                 }
+ 
+                 if (victimPkg == null) {
+-                    // 整个进程都属于豁免应用（例如微信设了「无限制」）。
+-                    // 默认不动它；但若开了闲置进程清理，且这个进程已经是 CACHED
+-                    // （纯缓存、没在做事，典型如微信小程序 :appbrand），就单独杀掉它。
+-                    // 跑着服务的进程（如 :push）重要度高于 CACHED，不会被选中，
+-                    // 所以推送不受影响。杀进程不置停止标志，应用要用时会自己拉回来。
+                     if (trimCached && p.importance
+                             >= ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED) {
+                         mBgSince.remove(key);
+                         Slog.i(TAG, "bg trim cached proc: " + p.processName + " u" + userId
+-                                + " after " + bgMin + "min");
++                                + " after " + bgSec + "s");
+                         mAmInternal.killProcess(p.processName, p.uid, "bg-trim-cached-proc");
+                     } else {
+-                        // 豁免的重新计时，免得每分钟都把它判一遍
+                         mBgSince.put(key, now);
+                     }
+                     continue;
+                 }
+ 
+                 mBgSince.remove(key);
+-                if (killOnly) {
+-                    // 只杀进程、不置停止标志：应用不再占内存，但 FCM 推送到达时
+-                    // 系统仍能把它唤醒。即时通讯类应用适合这一档。
++                if (mode == com.android.server.am.SmartFreezeController.MODE_SMART_FREEZE) {
++                    com.android.server.am.SmartFreezeController.freezePid(
++                            p.pid, p.uid, victimPkg);
++                } else if (mode == com.android.server.am.SmartFreezeController.MODE_KILL_PROCESS) {
++                    com.android.server.am.SmartFreezeController.thawPid(p.pid);
+                     Slog.i(TAG, "bg timeout kill proc: " + p.processName + " u" + userId
+-                            + " after " + bgMin + "min");
++                            + " after " + bgSec + "s");
+                     mAmInternal.killProcess(p.processName, p.uid, "bg-timeout-kill-proc");
+                 } else {
++                    com.android.server.am.SmartFreezeController.thawByPackage(
++                            victimPkg, "beforeForceStop");
+                     Slog.i(TAG, "bg timeout force stop: " + victimPkg + " u" + userId
+-                            + " after " + bgMin + "min");
++                            + " after " + bgSec + "s");
+                     mAmInternal.forceStopPackage(victimPkg, userId, "bg-timeout-force-stop");
+                 }
+             }
+-            // 已经不在运行的，清掉计时，免得表无限增长
+             for (int i = mBgSince.size() - 1; i >= 0; i--) {
+                 if (!seen.contains(mBgSince.keyAt(i))) {
+                     mBgSince.removeAt(i);
+@@ -3422,9 +3594,18 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
+             }
+         });
+ 
++        mBgSweepHandler.removeCallbacks(mBgScreenOffRunnable);
+         if (isAwake) {
++            final ActivityRecord top = mLastResumedActivity;
++            if (top != null && top.info != null && top.info.applicationInfo != null) {
++                com.android.server.am.SmartFreezeController.thawByUid(
++                        top.info.applicationInfo.uid, "screenAwake");
++            }
+             return;
+         }
++        if (mBgScreenOffFreeze) {
++            mBgSweepHandler.postDelayed(mBgScreenOffRunnable, SCREEN_OFF_FREEZE_DELAY_MS);
++        }
+         // If the device is going to sleep, keep a higher priority temporarily for potential
+         // animation of system UI. Even if AOD is not enabled, it should be no harm.
+         final WindowProcessController proc;
+diff --git a/services/core/java/com/android/server/wm/ActivityTaskSupervisor.java b/services/core/java/com/android/server/wm/ActivityTaskSupervisor.java
+index a077a0b9a..22479953d 100644
+--- a/services/core/java/com/android/server/wm/ActivityTaskSupervisor.java
++++ b/services/core/java/com/android/server/wm/ActivityTaskSupervisor.java
+@@ -1100,6 +1100,10 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
+     }
+ 
+     void startSpecificActivity(ActivityRecord r, boolean andResume, boolean checkConfig) {
++        if (r != null && r.info != null && r.info.applicationInfo != null) {
++            com.android.server.am.SmartFreezeController.thawByUid(
++                    r.info.applicationInfo.uid, "startSpecificActivity");
++        }
+         // Is this activity's application already running?
+         final WindowProcessController wpc =
+                 mService.getProcessController(r.processName, r.info.applicationInfo.uid);
+diff --git a/services/core/java/com/android/server/wm/TaskFragment.java b/services/core/java/com/android/server/wm/TaskFragment.java
+index 51b8bd1f0..e2d075db1 100644
+--- a/services/core/java/com/android/server/wm/TaskFragment.java
++++ b/services/core/java/com/android/server/wm/TaskFragment.java
+@@ -1343,6 +1343,10 @@ class TaskFragment extends WindowContainer<WindowContainer> {
+         if (next == null || !next.canResumeByCompat()) {
+             return false;
+         }
++        if (next.info != null && next.info.applicationInfo != null) {
++            com.android.server.am.SmartFreezeController.thawByUid(
++                    next.info.applicationInfo.uid, "resumeTopActivity");
++        }
+ 
+         next.delayedResume = false;
+ 

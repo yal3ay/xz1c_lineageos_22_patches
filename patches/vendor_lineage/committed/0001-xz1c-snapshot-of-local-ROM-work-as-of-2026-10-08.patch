@@ -1,0 +1,153 @@
+From 43a52b1df4b060580aaf8a44ba3ba8b2ced56c3d Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:19 +0800
+Subject: [PATCH] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: Iaad64763bc3aa82d5cc1ce5f2fbbc57ae6086a58
+---
+ config/common.mk                              |  6 ++++
+ release/aconfig/bp1a/Android.bp               |  2 ++
+ .../com.android.settingslib.flags/Android.bp  | 31 +++++++++++++++++++
+ ...new_status_bar_icons_flag_values.textproto |  6 ++++
+ .../bp1a/com.android.systemui/Android.bp      | 21 +++++++++++++
+ ...tor_compose_fragment_flag_values.textproto |  6 ++++
+ .../qs_ui_refactor_flag_values.textproto      |  6 ++++
+ 7 files changed, 78 insertions(+)
+ create mode 100644 release/aconfig/bp1a/com.android.settingslib.flags/Android.bp
+ create mode 100644 release/aconfig/bp1a/com.android.settingslib.flags/new_status_bar_icons_flag_values.textproto
+ create mode 100644 release/aconfig/bp1a/com.android.systemui/Android.bp
+ create mode 100644 release/aconfig/bp1a/com.android.systemui/qs_ui_refactor_compose_fragment_flag_values.textproto
+ create mode 100644 release/aconfig/bp1a/com.android.systemui/qs_ui_refactor_flag_values.textproto
+
+diff --git a/config/common.mk b/config/common.mk
+index 5265427b..9b1c8552 100644
+--- a/config/common.mk
++++ b/config/common.mk
+@@ -276,3 +276,9 @@ include vendor/lineage/config/version.mk
+ 
+ -include $(WORKSPACE)/build_env/image-auto-bits.mk
+ -include vendor/lineage/config/partner_gms.mk
++
++# Device-specific public OTA feed for the Japan Xperia XZ1 Compact SO-02K.
++ifeq ($(TARGET_PRODUCT),lineage_lilac_dcm)
++PRODUCT_SYSTEM_PROPERTIES += \
++    lineage.updater.uri=https://raw.githubusercontent.com/yal3ay/xz1c-lineageos-22/main/ota/lilac.json
++endif
+diff --git a/release/aconfig/bp1a/Android.bp b/release/aconfig/bp1a/Android.bp
+index 15e8822c..52a7a808 100644
+--- a/release/aconfig/bp1a/Android.bp
++++ b/release/aconfig/bp1a/Android.bp
+@@ -18,5 +18,7 @@ aconfig_value_set {
+     values: [
+         "aconfig-values-bp1a-android.hardware.biometrics-all",
+         "aconfig-values-bp1a-com.android.window.flags-all",
++        "aconfig-values-bp1a-com.android.systemui-all",
++        "aconfig-values-bp1a-com.android.settingslib.flags-all",
+     ],
+ }
+diff --git a/release/aconfig/bp1a/com.android.settingslib.flags/Android.bp b/release/aconfig/bp1a/com.android.settingslib.flags/Android.bp
+new file mode 100644
+index 00000000..6ef80df7
+--- /dev/null
++++ b/release/aconfig/bp1a/com.android.settingslib.flags/Android.bp
+@@ -0,0 +1,31 @@
++//
++// Copyright (C) 2026 The LineageOS Project
++//
++// SPDX-License-Identifier: Apache-2.0
++//
++// 启用 Android 15 中已合入但默认关闭的新版状态栏系统图标
++// （AOSP 声明见 frameworks/base/packages/SettingsLib/aconfig/settingslib.aconfig，
++//  未赋值即 DISABLED）。A16 / LineageOS 23 默认使用这一套。
++//
++// 影响范围（图形与代码路径均已在树内，无需移植任何资源）：
++//   WiFi   SettingsLib 的 ic_wifi_0..4（圆头弧线 + 中心水滴点）
++//          取代 framework-res 的 ic_wifi_signal_0..4（实心扇形）
++//          见 SystemUI/src/.../statusbar/connectivity/WifiIcons.java
++//   电池   BatteryLayersDrawable（unified battery）取代
++//          AccessorizedBatteryDrawable，见 BatteryMeterView.java:150
++//   信号   mobile_signal 图标高度改用 status_bar_mobile_signal_size_updated
++//
++// ⚠️ 配套改动：unified battery 的低电量配色原本把阈值写死为 20，
++//    且没有「橙色预警」档。已在 BatteryMeterView.getCurrentColorProfile()
++//    接上本项目可配置的 persist.debug.battery_tint_{low,warn}_pct，
++//    详见该方法注释。若回退本 flag，那段改动保持兼容、无需一并回退。
++//
++// 回退：删除本目录，并从 ../Android.bp 的 aconfig_value_set 中移除对应条目。
++
++aconfig_values {
++    name: "aconfig-values-bp1a-com.android.settingslib.flags-all",
++    package: "com.android.settingslib.flags",
++    srcs: [
++        "*_flag_values.textproto",
++    ],
++}
+diff --git a/release/aconfig/bp1a/com.android.settingslib.flags/new_status_bar_icons_flag_values.textproto b/release/aconfig/bp1a/com.android.settingslib.flags/new_status_bar_icons_flag_values.textproto
+new file mode 100644
+index 00000000..17d189f0
+--- /dev/null
++++ b/release/aconfig/bp1a/com.android.settingslib.flags/new_status_bar_icons_flag_values.textproto
+@@ -0,0 +1,6 @@
++flag_value {
++  package: "com.android.settingslib.flags"
++  name: "new_status_bar_icons"
++  state: ENABLED
++  permission: READ_ONLY
++}
+diff --git a/release/aconfig/bp1a/com.android.systemui/Android.bp b/release/aconfig/bp1a/com.android.systemui/Android.bp
+new file mode 100644
+index 00000000..63d0d714
+--- /dev/null
++++ b/release/aconfig/bp1a/com.android.systemui/Android.bp
+@@ -0,0 +1,21 @@
++//
++// Copyright (C) 2026 The LineageOS Project
++//
++// SPDX-License-Identifier: Apache-2.0
++//
++// 启用 Android 15 中已合入但默认关闭的新版 Quick Settings（Compose 实现），
++// 它带来可拖拽调整大小的磁贴（qs/panels 下的 ResizingState / IconTiles /
++// InfiniteGridLayout 等）。A16 默认开启，A15 仅以 flag 关闭。
++//
++// qs_ui_refactor_compose_fragment 依赖 qs_ui_refactor（见 systemui.aconfig 描述），
++// 故两者一并启用。
++//
++// 回退：删除本目录，并从 ../Android.bp 的 aconfig_value_set 中移除对应条目。
++
++aconfig_values {
++    name: "aconfig-values-bp1a-com.android.systemui-all",
++    package: "com.android.systemui",
++    srcs: [
++        "*_flag_values.textproto",
++    ],
++}
+diff --git a/release/aconfig/bp1a/com.android.systemui/qs_ui_refactor_compose_fragment_flag_values.textproto b/release/aconfig/bp1a/com.android.systemui/qs_ui_refactor_compose_fragment_flag_values.textproto
+new file mode 100644
+index 00000000..80319a02
+--- /dev/null
++++ b/release/aconfig/bp1a/com.android.systemui/qs_ui_refactor_compose_fragment_flag_values.textproto
+@@ -0,0 +1,6 @@
++flag_value {
++  package: "com.android.systemui"
++  name: "qs_ui_refactor_compose_fragment"
++  state: ENABLED
++  permission: READ_ONLY
++}
+diff --git a/release/aconfig/bp1a/com.android.systemui/qs_ui_refactor_flag_values.textproto b/release/aconfig/bp1a/com.android.systemui/qs_ui_refactor_flag_values.textproto
+new file mode 100644
+index 00000000..3515f8de
+--- /dev/null
++++ b/release/aconfig/bp1a/com.android.systemui/qs_ui_refactor_flag_values.textproto
+@@ -0,0 +1,6 @@
++flag_value {
++  package: "com.android.systemui"
++  name: "qs_ui_refactor"
++  state: ENABLED
++  permission: READ_ONLY
++}
+-- 
+2.43.0
+

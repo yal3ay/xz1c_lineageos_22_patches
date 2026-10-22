@@ -1,0 +1,119 @@
+From 29dccba378634608eda580b52a563bf88f52090f Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Fri, 16 Oct 2026 08:15:27 +0800
+Subject: [PATCH 2/2] =?UTF-8?q?xz1c:=20=E7=8B=80=E6=85=8B=E5=88=97?=
+ =?UTF-8?q?=E8=A8=AD=E5=AE=9A=E7=A7=BB=E9=99=A4=E7=84=A1=E6=95=88=E7=9A=84?=
+ =?UTF-8?q?=E9=9B=BB=E6=B1=A0=E6=A8=A3=E5=BC=8F=E8=88=87=E3=80=8C=E5=9C=96?=
+ =?UTF-8?q?=E7=A4=BA=E6=97=81=E3=80=8D=E7=99=BE=E5=88=86=E6=AF=94?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+本 ROM 的電池圖示只會畫直立圖示，圓形／純文字樣式不生效；
+百分比「圖示旁」實際也畫在圖示內，與「圖示內」相同。
+只保留：隱藏／圖示內。
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I6eb8d5aeca54b845e1a23a918d997322ea624264
+---
+ res/values/arrays.xml                           |  2 --
+ res/xml/status_bar_settings.xml                 |  9 ---------
+ .../statusbar/StatusBarSettings.java            | 17 -----------------
+ 3 files changed, 28 deletions(-)
+
+diff --git a/res/values/arrays.xml b/res/values/arrays.xml
+index 1821f6a..3d8672b 100644
+--- a/res/values/arrays.xml
++++ b/res/values/arrays.xml
+@@ -262,13 +262,11 @@
+     <string-array name="status_bar_battery_percentage_entries" translatable="false">
+         <item>@string/status_bar_battery_percentage_default</item>
+         <item>@string/status_bar_battery_percentage_text_inside</item>
+-        <item>@string/status_bar_battery_percentage_text_next</item>
+     </string-array>
+ 
+     <string-array name="status_bar_battery_percentage_values" translatable="false">
+         <item>0</item>
+         <item>1</item>
+-        <item>2</item>
+     </string-array>
+ 
+     <string-array name="status_bar_brightness_slider_entries" translatable="false">
+diff --git a/res/xml/status_bar_settings.xml b/res/xml/status_bar_settings.xml
+index 50933ea..b331960 100644
+--- a/res/xml/status_bar_settings.xml
++++ b/res/xml/status_bar_settings.xml
+@@ -74,15 +74,6 @@
+         android:key="status_bar_battery_key"
+         android:title="@string/status_bar_battery_title">
+ 
+-        <lineageos.preference.LineageSystemSettingListPreference
+-            android:key="status_bar_battery_style"
+-            android:title="@string/status_bar_battery_style_title"
+-            android:summary="%s"
+-            android:dialogTitle="@string/status_bar_battery_style_title"
+-            android:entries="@array/status_bar_battery_style_entries"
+-            android:entryValues="@array/status_bar_battery_style_values"
+-            android:defaultValue="0" />
+-
+         <lineageos.preference.LineageSystemSettingListPreference
+             android:key="status_bar_show_battery_percent"
+             android:title="@string/status_bar_battery_percentage_title"
+diff --git a/src/org/lineageos/lineageparts/statusbar/StatusBarSettings.java b/src/org/lineageos/lineageparts/statusbar/StatusBarSettings.java
+index 2b7ba57..4196527 100644
+--- a/src/org/lineageos/lineageparts/statusbar/StatusBarSettings.java
++++ b/src/org/lineageos/lineageparts/statusbar/StatusBarSettings.java
+@@ -35,11 +35,8 @@ public class StatusBarSettings extends SettingsPreferenceFragment
+ 
+     private static final String STATUS_BAR_CLOCK_STYLE = "status_bar_clock";
+     private static final String STATUS_BAR_AM_PM = "status_bar_am_pm";
+-    private static final String STATUS_BAR_BATTERY_STYLE = "status_bar_battery_style";
+-    private static final String STATUS_BAR_SHOW_BATTERY_PERCENT = "status_bar_show_battery_percent";
+     private static final String STATUS_BAR_QUICK_QS_PULLDOWN = "qs_quick_pulldown";
+ 
+-    private static final int STATUS_BAR_BATTERY_STYLE_TEXT = 2;
+ 
+     private static final int PULLDOWN_DIR_NONE = 0;
+     private static final int PULLDOWN_DIR_RIGHT = 1;
+@@ -50,7 +47,6 @@ public class StatusBarSettings extends SettingsPreferenceFragment
+     private LineageSystemSettingListPreference mQuickPulldown;
+     private LineageSystemSettingListPreference mStatusBarClock;
+     private LineageSystemSettingListPreference mStatusBarAmPm;
+-    private LineageSystemSettingListPreference mStatusBarBatteryShowPercent;
+ 
+     private PreferenceCategory mStatusBarBatteryCategory;
+     private PreferenceCategory mStatusBarClockCategory;
+@@ -68,12 +64,6 @@ public class StatusBarSettings extends SettingsPreferenceFragment
+ 
+         mStatusBarClockCategory = getPreferenceScreen().findPreference(CATEGORY_CLOCK);
+ 
+-        mStatusBarBatteryShowPercent = findPreference(STATUS_BAR_SHOW_BATTERY_PERCENT);
+-        LineageSystemSettingListPreference statusBarBattery =
+-                findPreference(STATUS_BAR_BATTERY_STYLE);
+-        statusBarBattery.setOnPreferenceChangeListener(this);
+-        enableStatusBarBatteryDependents(statusBarBattery.getIntValue(2));
+-
+         Intent intent = BatteryUtils.getBatteryIntent(getContext());
+         if (intent != null) {
+             mBatteryPresent = intent.getBooleanExtra(BatteryManager.EXTRA_PRESENT, true);
+@@ -145,17 +135,10 @@ public class StatusBarSettings extends SettingsPreferenceFragment
+                 break;
+             case STATUS_BAR_CLOCK_STYLE:
+                 break;
+-            case STATUS_BAR_BATTERY_STYLE:
+-                enableStatusBarBatteryDependents(value);
+-                break;
+         }
+         return true;
+     }
+ 
+-    private void enableStatusBarBatteryDependents(int batteryIconStyle) {
+-        mStatusBarBatteryShowPercent.setEnabled(batteryIconStyle != STATUS_BAR_BATTERY_STYLE_TEXT);
+-    }
+-
+     private void updateQuickPulldownSummary(int value) {
+         String summary="";
+         switch (value) {
+-- 
+2.43.0
+

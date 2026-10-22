@@ -1,0 +1,1282 @@
+From ebf17df617754b30fbcaee1e5f49510e8a7e2e63 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Fri, 9 Oct 2026 14:02:22 +0800
+Subject: [PATCH] Updater: download source choice (GitHub + mirrors) with speed
+ test
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I629bd2e39fcfe1c71b2b53eadbc1ea82b525bdc7
+---
+ app/src/main/AndroidManifest.xml              |   6 +
+ .../org/lineageos/updater/AddonsManager.java  | 341 ++++++++++++++++++
+ .../lineageos/updater/UpdatesActivity.java    |  96 ++++-
+ .../updater/UpdatesCheckReceiver.java         |  33 +-
+ .../updater/controller/UpdaterController.java |  91 +++--
+ .../download/HttpURLConnectionClient.java     |   9 +-
+ .../org/lineageos/updater/misc/Constants.java |   1 +
+ .../org/lineageos/updater/misc/Mirrors.java   | 204 +++++++++++
+ app/src/main/res/drawable/xz1c_addon_chip.xml |  11 +
+ app/src/main/res/layout/activity_updates.xml  |  21 ++
+ .../main/res/layout/preferences_dialog.xml    |  29 ++
+ app/src/main/res/values-zh-rCN/strings.xml    |  29 ++
+ app/src/main/res/values-zh-rTW/strings.xml    |  29 ++
+ app/src/main/res/values/strings.xml           |  29 ++
+ app/src/main/res/values/styles.xml            |  16 +
+ 15 files changed, 895 insertions(+), 50 deletions(-)
+ create mode 100644 app/src/main/java/org/lineageos/updater/AddonsManager.java
+ create mode 100644 app/src/main/java/org/lineageos/updater/misc/Mirrors.java
+ create mode 100644 app/src/main/res/drawable/xz1c_addon_chip.xml
+
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 5ecd007..1ebba00 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -14,6 +14,12 @@
+     <uses-permission android:name="android.permission.START_ACTIVITIES_FROM_BACKGROUND" />
+     <uses-permission android:name="android.permission.WAKE_LOCK" />
+ 
++    <!-- XZ1C: add-on packages, to show whether they are installed -->
++    <queries>
++        <package android:name="com.google.android.gms" />
++        <package android:name="com.sonyericsson.album" />
++    </queries>
++
+     <application
+         android:allowBackup="false"
+         android:icon="@mipmap/ic_launcher"
+diff --git a/app/src/main/java/org/lineageos/updater/AddonsManager.java b/app/src/main/java/org/lineageos/updater/AddonsManager.java
+new file mode 100644
+index 0000000..99bae87
+--- /dev/null
++++ b/app/src/main/java/org/lineageos/updater/AddonsManager.java
+@@ -0,0 +1,341 @@
++/*
++ * SPDX-FileCopyrightText: 2026 XZ1C project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package org.lineageos.updater;
++
++import android.content.SharedPreferences;
++import android.content.pm.PackageManager;
++import android.os.Handler;
++import android.os.Looper;
++import android.os.RecoverySystem;
++import android.text.format.Formatter;
++import android.util.Log;
++import android.view.View;
++import android.widget.LinearLayout;
++import android.widget.ProgressBar;
++import android.widget.TextView;
++
++import androidx.appcompat.app.AlertDialog;
++import androidx.appcompat.app.AppCompatActivity;
++import androidx.preference.PreferenceManager;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++import org.lineageos.updater.misc.Utils;
++
++import java.io.ByteArrayOutputStream;
++import java.io.File;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.io.InputStream;
++import java.io.OutputStream;
++import java.net.HttpURLConnection;
++import java.net.URL;
++import java.security.MessageDigest;
++import java.util.HexFormat;
++
++/**
++ * XZ1C: install the add-on packages (Google services, Sony services) from the Updater page.
++ *
++ * The packages are not part of the ROM. addons.json in the add-on repository lists each
++ * package's download URL, size and sha256. Downloaded zips are checked against that sha256
++ * and the ROM's OTA certificate, then installed through recovery exactly like an OTA.
++ * addon.d keeps them across later OTAs.
++ */
++public class AddonsManager {
++    private static final String TAG = "XZ1CAddons";
++    private static final String MANIFEST_URL =
++            "https://raw.githubusercontent.com/yaleax/xz1c-addons/main/addons.json";
++    private static final String PREF_PENDING = "xz1c_addons_pending_file";
++
++    private static final String ID_GAPPS = "gapps";
++    private static final String ID_SONY = "sony";
++    private static final String PKG_GAPPS = "com.google.android.gms";
++    private static final String PKG_SONY = "com.sonyericsson.album";
++
++    private final AppCompatActivity mActivity;
++    private final SharedPreferences mPrefs;
++    private final Handler mHandler = new Handler(Looper.getMainLooper());
++    private TextView mGapps, mSony;
++    private volatile boolean mBusy, mCancelled;
++
++    public AddonsManager(AppCompatActivity activity) {
++        mActivity = activity;
++        mPrefs = PreferenceManager.getDefaultSharedPreferences(activity);
++    }
++
++    public void bind(View row) {
++        if (row == null) return;
++        mGapps = row.findViewById(R.id.addon_gapps);
++        mSony = row.findViewById(R.id.addon_sony);
++        mGapps.setOnClickListener(v -> onAddonClicked(ID_GAPPS));
++        mSony.setOnClickListener(v -> onAddonClicked(ID_SONY));
++        // A package installed on the previous boot is no longer needed.
++        String pending = mPrefs.getString(PREF_PENDING, null);
++        if (pending != null) {
++            //noinspection ResultOfMethodCallIgnored
++            new File(pending).delete();
++            mPrefs.edit().remove(PREF_PENDING).apply();
++        }
++        refresh();
++    }
++
++    public void refresh() {
++        if (mGapps == null) return;
++        mGapps.setText(mActivity.getString(isInstalled(PKG_GAPPS)
++                ? R.string.addon_installed_fmt : R.string.addon_install_fmt,
++                mActivity.getString(R.string.addon_gapps)));
++        mSony.setText(mActivity.getString(isInstalled(PKG_SONY)
++                ? R.string.addon_installed_fmt : R.string.addon_install_fmt,
++                mActivity.getString(R.string.addon_sony)));
++    }
++
++    private boolean isInstalled(String pkg) {
++        try {
++            mActivity.getPackageManager().getPackageInfo(pkg, 0);
++            return true;
++        } catch (PackageManager.NameNotFoundException e) {
++            return false;
++        }
++    }
++
++    private String labelOf(String id) {
++        return mActivity.getString(ID_GAPPS.equals(id) ? R.string.addon_gapps : R.string.addon_sony);
++    }
++
++    private void onAddonClicked(String id) {
++        if (mBusy) return;
++        checkManifest(id);
++    }
++
++    // ------------------------------------------------------------------ flow
++
++    private static final class Addon {
++        String file, url, version, sha256;
++        long size;
++    }
++
++    /** Step 1: read addons.json (small), then confirm with version and size. */
++    private void checkManifest(String id) {
++        mBusy = true;
++        final AlertDialog checking = new AlertDialog.Builder(mActivity)
++                .setTitle(labelOf(id))
++                .setMessage(R.string.addon_checking)
++                .setCancelable(false)
++                .show();
++        new Thread(() -> {
++            try {
++                Addon addon = readManifest(id);
++                mHandler.post(() -> {
++                    checking.dismiss();
++                    mBusy = false;
++                    confirmDownload(id, addon);
++                });
++            } catch (Exception e) {
++                mHandler.post(() -> {
++                    checking.dismiss();
++                    mBusy = false;
++                    fail(id, e);
++                });
++            }
++        }, "xz1c-addons-manifest").start();
++    }
++
++    private void confirmDownload(String id, Addon addon) {
++        String size = Formatter.formatShortFileSize(mActivity, addon.size);
++        boolean installed = isInstalled(ID_GAPPS.equals(id) ? PKG_GAPPS : PKG_SONY);
++        new AlertDialog.Builder(mActivity)
++                .setTitle(labelOf(id))
++                .setMessage(mActivity.getString(installed ? R.string.addon_reinstall_message
++                        : R.string.addon_install_message, addon.version, size))
++                .setNegativeButton(android.R.string.cancel, null)
++                .setPositiveButton(R.string.addon_download, (d, w) -> download(id, addon))
++                .show();
++    }
++
++    /** Step 2: download with progress, check sha256 and the OTA signature. */
++    private void download(String id, Addon addon) {
++        mBusy = true;
++        mCancelled = false;
++        LinearLayout box = new LinearLayout(mActivity);
++        box.setOrientation(LinearLayout.VERTICAL);
++        box.setPadding(dp(24), dp(12), dp(24), 0);
++        final TextView status = new TextView(mActivity);
++        final ProgressBar bar = new ProgressBar(mActivity, null,
++                android.R.attr.progressBarStyleHorizontal);
++        bar.setMax(100);
++        box.addView(status);
++        box.addView(bar);
++        final AlertDialog dialog = new AlertDialog.Builder(mActivity)
++                .setTitle(labelOf(id))
++                .setView(box)
++                .setCancelable(false)
++                .setNegativeButton(android.R.string.cancel, (d, w) -> mCancelled = true)
++                .show();
++        status.setText(mActivity.getString(R.string.addon_downloading, 0));
++        new Thread(() -> {
++            File out = new File(Utils.getDownloadPath(mActivity), addon.file);
++            try {
++                downloadAsset(addon, out, pct -> mHandler.post(() -> {
++                    bar.setProgress(pct);
++                    status.setText(mActivity.getString(R.string.addon_downloading, pct));
++                }));
++                mHandler.post(() -> status.setText(R.string.addon_verifying));
++                RecoverySystem.verifyPackage(out, null, null);
++                mHandler.post(() -> {
++                    dialog.dismiss();
++                    mBusy = false;
++                    confirmInstall(id, out);
++                });
++            } catch (Exception e) {
++                //noinspection ResultOfMethodCallIgnored
++                out.delete();
++                mHandler.post(() -> {
++                    dialog.dismiss();
++                    mBusy = false;
++                    if (!mCancelled) fail(id, e);
++                });
++            }
++        }, "xz1c-addons-download").start();
++    }
++
++    /** Step 3: reboot into recovery, which installs the zip like an OTA and reboots back. */
++    private void confirmInstall(String id, File file) {
++        new AlertDialog.Builder(mActivity)
++                .setTitle(labelOf(id))
++                .setMessage(mActivity.getString(R.string.addon_ready_message, labelOf(id)))
++                .setNegativeButton(android.R.string.cancel, (d, w) -> {
++                    //noinspection ResultOfMethodCallIgnored
++                    file.delete();
++                })
++                .setPositiveButton(R.string.addon_restart_install, (d, w) -> {
++                    mPrefs.edit().putString(PREF_PENDING, file.getAbsolutePath()).apply();
++                    try {
++                        RecoverySystem.installPackage(mActivity, file);
++                    } catch (IOException e) {
++                        fail(id, e);
++                    }
++                })
++                .show();
++    }
++
++    private void fail(String id, Exception e) {
++        Log.e(TAG, "add-on " + id + " failed", e);
++        String message;
++        if (e instanceof HttpException) {
++            message = mActivity.getString(R.string.addon_unavailable, e.getMessage());
++        } else if (e instanceof ChecksumException) {
++            message = mActivity.getString(R.string.addon_checksum_failed);
++        } else {
++            message = mActivity.getString(R.string.addon_failed, String.valueOf(e.getMessage()));
++        }
++        new AlertDialog.Builder(mActivity)
++                .setTitle(labelOf(id))
++                .setMessage(message)
++                .setPositiveButton(android.R.string.ok, null)
++                .show();
++    }
++
++    // -------------------------------------------------------------- network
++
++    private static final class HttpException extends IOException {
++        final int code;
++        HttpException(int code) {
++            super("HTTP " + code);
++            this.code = code;
++        }
++    }
++
++    private static final class ChecksumException extends IOException {
++        ChecksumException() {
++            super("sha256 mismatch");
++        }
++    }
++
++    private interface Progress {
++        void update(int percent);
++    }
++
++    private Addon readManifest(String id) throws Exception {
++        JSONObject manifest = new JSONObject(getString(MANIFEST_URL));
++        JSONArray list = manifest.getJSONArray("addons");
++        for (int i = 0; i < list.length(); i++) {
++            JSONObject o = list.getJSONObject(i);
++            if (!id.equals(o.getString("id"))) continue;
++            Addon a = new Addon();
++            a.file = o.getString("file");
++            a.url = o.getString("url");
++            a.version = o.optString("version", "");
++            a.sha256 = o.getString("sha256").toLowerCase();
++            a.size = o.optLong("size", 0);
++            if (a.file.contains("/") || a.file.startsWith(".")) throw new IOException("bad name");
++            return a;
++        }
++        throw new IOException("not in addons.json: " + id);
++    }
++
++    private void downloadAsset(Addon addon, File out, Progress progress) throws Exception {
++        // GitHub release downloads redirect (https -> https) to their storage host.
++        HttpURLConnection conn = open(addon.url);
++        int code = conn.getResponseCode();
++        if (code != 200) {
++            conn.disconnect();
++            throw new HttpException(code);
++        }
++
++        long total = addon.size > 0 ? addon.size : conn.getContentLengthLong();
++        MessageDigest sha = MessageDigest.getInstance("SHA-256");
++        try (InputStream in = conn.getInputStream(); OutputStream os = new FileOutputStream(out)) {
++            byte[] buf = new byte[64 * 1024];
++            long done = 0;
++            int last = -1, n;
++            while ((n = in.read(buf)) > 0) {
++                if (mCancelled) throw new IOException("cancelled");
++                os.write(buf, 0, n);
++                sha.update(buf, 0, n);
++                done += n;
++                int pct = total > 0 ? (int) (done * 100 / total) : 0;
++                if (pct != last) {
++                    last = pct;
++                    progress.update(pct);
++                }
++            }
++        } finally {
++            conn.disconnect();
++        }
++        if (!HexFormat.of().formatHex(sha.digest()).equals(addon.sha256)) {
++            throw new ChecksumException();
++        }
++    }
++
++    private String getString(String url) throws IOException {
++        HttpURLConnection conn = open(url);
++        try {
++            int code = conn.getResponseCode();
++            if (code != 200) throw new HttpException(code);
++            try (InputStream in = conn.getInputStream()) {
++                ByteArrayOutputStream bos = new ByteArrayOutputStream();
++                byte[] buf = new byte[8192];
++                int n;
++                while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
++                return bos.toString("UTF-8");
++            }
++        } finally {
++            conn.disconnect();
++        }
++    }
++
++    private HttpURLConnection open(String url) throws IOException {
++        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
++        conn.setConnectTimeout(20000);
++        conn.setReadTimeout(60000);
++        conn.setInstanceFollowRedirects(true);
++        return conn;
++    }
++
++    private int dp(int v) {
++        return (int) (v * mActivity.getResources().getDisplayMetrics().density + 0.5f);
++    }
++}
+diff --git a/app/src/main/java/org/lineageos/updater/UpdatesActivity.java b/app/src/main/java/org/lineageos/updater/UpdatesActivity.java
+index 5fab3f0..7f4264d 100644
+--- a/app/src/main/java/org/lineageos/updater/UpdatesActivity.java
++++ b/app/src/main/java/org/lineageos/updater/UpdatesActivity.java
+@@ -42,6 +42,8 @@ import android.view.View;
+ import android.view.animation.Animation;
+ import android.view.animation.LinearInterpolator;
+ import android.view.animation.RotateAnimation;
++import android.widget.ArrayAdapter;
++import android.widget.Button;
+ import android.widget.RelativeLayout;
+ import android.widget.Spinner;
+ import android.widget.TextView;
+@@ -71,6 +73,7 @@ import org.lineageos.updater.controller.UpdaterService;
+ import org.lineageos.updater.download.DownloadClient;
+ import org.lineageos.updater.misc.BuildInfoUtils;
+ import org.lineageos.updater.misc.Constants;
++import org.lineageos.updater.misc.Mirrors;
+ import org.lineageos.updater.misc.StringGenerator;
+ import org.lineageos.updater.misc.Utils;
+ import org.lineageos.updater.model.Update;
+@@ -79,7 +82,9 @@ import org.lineageos.updater.model.UpdateInfo;
+ import java.io.File;
+ import java.io.IOException;
+ import java.util.ArrayList;
++import java.util.Arrays;
+ import java.util.List;
++import java.util.Locale;
+ import java.util.UUID;
+ 
+ public class UpdatesActivity extends UpdatesListActivity implements UpdateImporter.Callbacks {
+@@ -232,11 +237,17 @@ public class UpdatesActivity extends UpdatesListActivity implements UpdateImport
+         }
+ 
+         maybeShowWelcomeMessage();
++
++        mAddonsManager = new AddonsManager(this);
++        mAddonsManager.bind(findViewById(R.id.addons_row));
+     }
+ 
++    private AddonsManager mAddonsManager;
++
+     @Override
+     public void onStart() {
+         super.onStart();
++        if (mAddonsManager != null) mAddonsManager.refresh();
+         Intent intent = new Intent(this, UpdaterService.class);
+         startService(intent);
+         bindService(intent, mConnection, Context.BIND_AUTO_CREATE);
+@@ -450,20 +461,32 @@ public class UpdatesActivity extends UpdatesListActivity implements UpdateImport
+     }
+ 
+     private void downloadUpdatesList(final boolean manualRefresh) {
++        List<String> candidates = Mirrors.feedCandidates(this, Utils.getServerURL(this));
++        downloadUpdatesList(manualRefresh, candidates, 0);
++    }
++
++    private void downloadUpdatesList(final boolean manualRefresh, final List<String> candidates,
++            final int index) {
+         final File jsonFile = Utils.getCachedUpdateList(this);
+         final File jsonFileTmp = new File(jsonFile.getAbsolutePath() + UUID.randomUUID());
+-        String url = Utils.getServerURL(this);
++        final String url = candidates.get(index);
+         Log.d(TAG, "Checking " + url);
+ 
+         DownloadClient.DownloadCallback callback = new DownloadClient.DownloadCallback() {
+             @Override
+             public void onFailure(final boolean cancelled) {
+-                Log.e(TAG, "Could not download updates list");
++                Log.e(TAG, "Could not download updates list from " + url);
+                 runOnUiThread(() -> {
+-                    if (!cancelled) {
+-                        showSnackbar(R.string.snack_updates_check_failed, Snackbar.LENGTH_LONG);
++                    //noinspection ResultOfMethodCallIgnored
++                    jsonFileTmp.delete();
++                    if (!cancelled && index + 1 < candidates.size()) {
++                        downloadUpdatesList(manualRefresh, candidates, index + 1);
++                    } else {
++                        if (!cancelled) {
++                            showSnackbar(R.string.snack_updates_check_failed, Snackbar.LENGTH_LONG);
++                        }
++                        refreshAnimationStop();
+                     }
+-                    refreshAnimationStop();
+                 });
+             }
+ 
+@@ -474,7 +497,7 @@ public class UpdatesActivity extends UpdatesListActivity implements UpdateImport
+             @Override
+             public void onSuccess() {
+                 runOnUiThread(() -> {
+-                    Log.d(TAG, "List downloaded");
++                    Log.d(TAG, "List downloaded from " + url);
+                     processNewJson(jsonFile, jsonFileTmp, manualRefresh);
+                     refreshAnimationStop();
+                 });
+@@ -489,8 +512,15 @@ public class UpdatesActivity extends UpdatesListActivity implements UpdateImport
+                     .setDownloadCallback(callback)
+                     .build();
+         } catch (IOException exception) {
+-            Log.e(TAG, "Could not build download client");
+-            showSnackbar(R.string.snack_updates_check_failed, Snackbar.LENGTH_LONG);
++            Log.e(TAG, "Could not build download client for " + url);
++            //noinspection ResultOfMethodCallIgnored
++            jsonFileTmp.delete();
++            if (index + 1 < candidates.size()) {
++                downloadUpdatesList(manualRefresh, candidates, index + 1);
++            } else {
++                showSnackbar(R.string.snack_updates_check_failed, Snackbar.LENGTH_LONG);
++                refreshAnimationStop();
++            }
+             return;
+         }
+ 
+@@ -586,6 +616,21 @@ public class UpdatesActivity extends UpdatesListActivity implements UpdateImport
+         }
+     }
+ 
++    private String getSpeedTestUrl() {
++        try {
++            List<UpdateInfo> updates = Utils.parseJson(Utils.getCachedUpdateList(this), false);
++            if (!updates.isEmpty()) {
++                String url = updates.get(0).getDownloadUrl();
++                if (url != null) {
++                    return url;
++                }
++            }
++        } catch (IOException | JSONException e) {
++            Log.e(TAG, "Could not get download URL for the speed test", e);
++        }
++        return Utils.getServerURL(this);
++    }
++
+     @SuppressLint("ClickableViewAccessibility")
+     private void showPreferencesDialog() {
+         View view = LayoutInflater.from(this).inflate(R.layout.preferences_dialog, null);
+@@ -595,6 +640,8 @@ public class UpdatesActivity extends UpdatesListActivity implements UpdateImport
+                 R.id.preferences_metered_network_warning);
+         SwitchCompat abPerfMode = view.findViewById(R.id.preferences_ab_perf_mode);
+         SwitchCompat updateRecovery = view.findViewById(R.id.preferences_update_recovery);
++        Spinner downloadSource = view.findViewById(R.id.preferences_download_source);
++        Button downloadTest = view.findViewById(R.id.preferences_download_test);
+ 
+         if (!Utils.isABDevice()) {
+             abPerfMode.setVisibility(View.GONE);
+@@ -607,6 +654,37 @@ public class UpdatesActivity extends UpdatesListActivity implements UpdateImport
+                 prefs.getBoolean(Constants.PREF_MOBILE_DATA_WARNING, true)));
+         abPerfMode.setChecked(prefs.getBoolean(Constants.PREF_AB_PERF_MODE, false));
+ 
++        final String[] sourceEntries = getResources()
++                .getStringArray(R.array.menu_download_source_entries);
++        final List<String> sourceList = new ArrayList<>(Arrays.asList(sourceEntries));
++        final ArrayAdapter<String> downloadSourceAdapter = new ArrayAdapter<>(this,
++                android.R.layout.simple_spinner_item, sourceList);
++        downloadSourceAdapter.setDropDownViewResource(
++                android.R.layout.simple_spinner_dropdown_item);
++        downloadSource.setAdapter(downloadSourceAdapter);
++        downloadSource.setSelection(Mirrors.getSelected(this));
++
++        downloadTest.setOnClickListener(v -> {
++            downloadTest.setEnabled(false);
++            downloadTest.setText(R.string.menu_download_testing);
++            final String testUrl = getSpeedTestUrl();
++            new Thread(() -> {
++                final long[] speeds = Mirrors.probeAll(testUrl);
++                runOnUiThread(() -> {
++                    for (int i = 1; i < Mirrors.IDS.length; i++) {
++                        long bps = speeds[i];
++                        String speed = bps > 0
++                                ? String.format(Locale.US, "%.1f MB/s", bps / 1048576.0)
++                                : getString(R.string.menu_download_failed);
++                        sourceList.set(i, sourceEntries[i] + " · " + speed);
++                    }
++                    downloadSourceAdapter.notifyDataSetChanged();
++                    downloadTest.setEnabled(true);
++                    downloadTest.setText(R.string.menu_download_test);
++                });
++            }).start();
++        });
++
+         if (getResources().getBoolean(R.bool.config_hideRecoveryUpdate)) {
+             // Hide the update feature if explicitly requested.
+             // Might be the case of A-only devices using prebuilt vendor images.
+@@ -646,6 +724,8 @@ public class UpdatesActivity extends UpdatesListActivity implements UpdateImport
+                             .putBoolean(Constants.PREF_METERED_NETWORK_WARNING,
+                                     meteredNetworkWarning.isChecked())
+                             .putBoolean(Constants.PREF_AB_PERF_MODE, abPerfMode.isChecked())
++                            .putInt(Constants.PREF_DOWNLOAD_SOURCE,
++                                    downloadSource.getSelectedItemPosition())
+                             .apply();
+ 
+                     if (Utils.isUpdateCheckEnabled(this)) {
+diff --git a/app/src/main/java/org/lineageos/updater/UpdatesCheckReceiver.java b/app/src/main/java/org/lineageos/updater/UpdatesCheckReceiver.java
+index 9f45423..9c90bd7 100644
+--- a/app/src/main/java/org/lineageos/updater/UpdatesCheckReceiver.java
++++ b/app/src/main/java/org/lineageos/updater/UpdatesCheckReceiver.java
+@@ -32,11 +32,13 @@ import androidx.preference.PreferenceManager;
+ import org.json.JSONException;
+ import org.lineageos.updater.download.DownloadClient;
+ import org.lineageos.updater.misc.Constants;
++import org.lineageos.updater.misc.Mirrors;
+ import org.lineageos.updater.misc.Utils;
+ 
+ import java.io.File;
+ import java.io.IOException;
+ import java.util.Date;
++import java.util.List;
+ import java.util.UUID;
+ 
+ public class UpdatesCheckReceiver extends BroadcastReceiver {
+@@ -74,13 +76,28 @@ public class UpdatesCheckReceiver extends BroadcastReceiver {
+         }
+ 
+         final File json = Utils.getCachedUpdateList(context);
++        final List<String> candidates = Mirrors.feedCandidates(context, Utils.getServerURL(context));
++        downloadUpdatesList(context, preferences, json, candidates, 0);
++    }
++
++    private static void downloadUpdatesList(final Context context,
++            final SharedPreferences preferences, final File json,
++            final List<String> candidates, final int index) {
+         final File jsonNew = new File(json.getAbsolutePath() + UUID.randomUUID());
+-        String url = Utils.getServerURL(context);
++        final String url = candidates.get(index);
++        Log.d(TAG, "Checking " + url);
+         DownloadClient.DownloadCallback callback = new DownloadClient.DownloadCallback() {
+             @Override
+             public void onFailure(boolean cancelled) {
+-                Log.e(TAG, "Could not download updates list, scheduling new check");
+-                scheduleUpdatesCheck(context);
++                Log.e(TAG, "Could not download updates list from " + url);
++                //noinspection ResultOfMethodCallIgnored
++                jsonNew.delete();
++                if (!cancelled && index + 1 < candidates.size()) {
++                    downloadUpdatesList(context, preferences, json, candidates, index + 1);
++                } else {
++                    Log.e(TAG, "Could not download updates list, scheduling new check");
++                    scheduleUpdatesCheck(context);
++                }
+             }
+ 
+             @Override
+@@ -117,8 +134,14 @@ public class UpdatesCheckReceiver extends BroadcastReceiver {
+                     .build();
+             downloadClient.start();
+         } catch (IOException e) {
+-            Log.e(TAG, "Could not fetch list, scheduling new check", e);
+-            scheduleUpdatesCheck(context);
++            Log.e(TAG, "Could not fetch list from " + url, e);
++            //noinspection ResultOfMethodCallIgnored
++            jsonNew.delete();
++            if (index + 1 < candidates.size()) {
++                downloadUpdatesList(context, preferences, json, candidates, index + 1);
++            } else {
++                scheduleUpdatesCheck(context);
++            }
+         }
+     }
+ 
+diff --git a/app/src/main/java/org/lineageos/updater/controller/UpdaterController.java b/app/src/main/java/org/lineageos/updater/controller/UpdaterController.java
+index e5ac277..1546acf 100644
+--- a/app/src/main/java/org/lineageos/updater/controller/UpdaterController.java
++++ b/app/src/main/java/org/lineageos/updater/controller/UpdaterController.java
+@@ -19,6 +19,8 @@ import android.annotation.SuppressLint;
+ import android.content.Context;
+ import android.content.Intent;
+ import android.database.sqlite.SQLiteDatabase;
++import android.os.Handler;
++import android.os.Looper;
+ import android.os.PowerManager;
+ import android.os.SystemClock;
+ import android.util.Log;
+@@ -27,6 +29,7 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+ 
+ import org.lineageos.updater.UpdatesDbHelper;
+ import org.lineageos.updater.download.DownloadClient;
++import org.lineageos.updater.misc.Mirrors;
+ import org.lineageos.updater.misc.Utils;
+ import org.lineageos.updater.model.Update;
+ import org.lineageos.updater.model.UpdateInfo;
+@@ -372,26 +375,34 @@ public class UpdaterController {
+             Log.d(TAG, "Changing name with " + destination.getName());
+         }
+         update.setFile(destination);
+-        DownloadClient downloadClient;
+-        try {
+-            downloadClient = new DownloadClient.Builder()
+-                    .setUrl(update.getDownloadUrl())
+-                    .setDestination(update.getFile())
+-                    .setDownloadCallback(getDownloadCallback(downloadId))
+-                    .setProgressListener(getProgressListener(downloadId))
+-                    .setUseDuplicateLinks(true)
+-                    .build();
+-        } catch (IOException exception) {
+-            Log.e(TAG, "Could not build download client");
+-            update.setStatus(UpdateStatus.PAUSED_ERROR);
+-            notifyUpdateChange(downloadId);
+-            return;
+-        }
+-        addDownloadClient(entry, downloadClient);
+         update.setStatus(UpdateStatus.STARTING);
+         notifyUpdateChange(downloadId);
+-        downloadClient.start();
+-        mWakeLock.acquire();
++        new Thread(() -> {
++            String url = Mirrors.choose(mContext, update.getDownloadUrl());
++            new Handler(Looper.getMainLooper()).post(() -> {
++                if (isDownloading(downloadId)) {
++                    return;
++                }
++                DownloadClient downloadClient;
++                try {
++                    downloadClient = new DownloadClient.Builder()
++                            .setUrl(url)
++                            .setDestination(update.getFile())
++                            .setDownloadCallback(getDownloadCallback(downloadId))
++                            .setProgressListener(getProgressListener(downloadId))
++                            .setUseDuplicateLinks(true)
++                            .build();
++                } catch (IOException exception) {
++                    Log.e(TAG, "Could not build download client");
++                    update.setStatus(UpdateStatus.PAUSED_ERROR);
++                    notifyUpdateChange(downloadId);
++                    return;
++                }
++                addDownloadClient(entry, downloadClient);
++                downloadClient.start();
++                mWakeLock.acquire();
++            });
++        }).start();
+     }
+ 
+     @SuppressLint("WakelockTimeout")
+@@ -419,26 +430,34 @@ public class UpdaterController {
+             verifyUpdateAsync(downloadId);
+             notifyUpdateChange(downloadId);
+         } else {
+-            DownloadClient downloadClient;
+-            try {
+-                downloadClient = new DownloadClient.Builder()
+-                        .setUrl(update.getDownloadUrl())
+-                        .setDestination(update.getFile())
+-                        .setDownloadCallback(getDownloadCallback(downloadId))
+-                        .setProgressListener(getProgressListener(downloadId))
+-                        .setUseDuplicateLinks(true)
+-                        .build();
+-            } catch (IOException exception) {
+-                Log.e(TAG, "Could not build download client");
+-                update.setStatus(UpdateStatus.PAUSED_ERROR);
+-                notifyUpdateChange(downloadId);
+-                return;
+-            }
+-            addDownloadClient(entry, downloadClient);
+             update.setStatus(UpdateStatus.STARTING);
+             notifyUpdateChange(downloadId);
+-            downloadClient.resume();
+-            mWakeLock.acquire();
++            new Thread(() -> {
++                String url = Mirrors.choose(mContext, update.getDownloadUrl());
++                new Handler(Looper.getMainLooper()).post(() -> {
++                    if (isDownloading(downloadId)) {
++                        return;
++                    }
++                    DownloadClient downloadClient;
++                    try {
++                        downloadClient = new DownloadClient.Builder()
++                                .setUrl(url)
++                                .setDestination(update.getFile())
++                                .setDownloadCallback(getDownloadCallback(downloadId))
++                                .setProgressListener(getProgressListener(downloadId))
++                                .setUseDuplicateLinks(true)
++                                .build();
++                    } catch (IOException exception) {
++                        Log.e(TAG, "Could not build download client");
++                        update.setStatus(UpdateStatus.PAUSED_ERROR);
++                        notifyUpdateChange(downloadId);
++                        return;
++                    }
++                    addDownloadClient(entry, downloadClient);
++                    downloadClient.resume();
++                    mWakeLock.acquire();
++                });
++            }).start();
+         }
+     }
+ 
+diff --git a/app/src/main/java/org/lineageos/updater/download/HttpURLConnectionClient.java b/app/src/main/java/org/lineageos/updater/download/HttpURLConnectionClient.java
+index 6306761..f9eeb77 100644
+--- a/app/src/main/java/org/lineageos/updater/download/HttpURLConnectionClient.java
++++ b/app/src/main/java/org/lineageos/updater/download/HttpURLConnectionClient.java
+@@ -268,10 +268,17 @@ public class HttpURLConnectionClient implements DownloadClient {
+ 
+                 mCallback.onResponse(new Headers());
+ 
++                boolean append = false;
+                 if (mResume && isPartialContentCode(responseCode)) {
+                     justResumed = true;
+                     mTotalBytesRead = mDestination.length();
++                    append = true;
+                     Log.d(TAG, "The server fulfilled the partial content request");
++                } else if (mResume && isSuccessCode(responseCode)) {
++                    // Some mirrors don't support Range and reply with 200: start over
++                    // instead of appending the full content to the partial file.
++                    Log.d(TAG, "The server does not support Range, restarting from scratch");
++                    mTotalBytesRead = 0;
+                 } else if (mResume || !isSuccessCode(responseCode)) {
+                     Log.e(TAG, "The server replied with code " + responseCode);
+                     mCallback.onFailure(isInterrupted());
+@@ -280,7 +287,7 @@ public class HttpURLConnectionClient implements DownloadClient {
+ 
+                 try (
+                         InputStream inputStream = mClient.getInputStream();
+-                        OutputStream outputStream = new FileOutputStream(mDestination, mResume)
++                        OutputStream outputStream = new FileOutputStream(mDestination, append)
+                 ) {
+                     mTotalBytes = mClient.getContentLengthLong() + mTotalBytesRead;
+                     byte[] b = new byte[8192];
+diff --git a/app/src/main/java/org/lineageos/updater/misc/Constants.java b/app/src/main/java/org/lineageos/updater/misc/Constants.java
+index dfff5af..5b1fcdb 100644
+--- a/app/src/main/java/org/lineageos/updater/misc/Constants.java
++++ b/app/src/main/java/org/lineageos/updater/misc/Constants.java
+@@ -35,6 +35,7 @@ public final class Constants {
+     public static final String PREF_METERED_NETWORK_WARNING = "pref_metered_network_warning";
+     public static final String PREF_MOBILE_DATA_WARNING = "pref_mobile_data_warning";
+     public static final String PREF_NEEDS_REBOOT_ID = "needs_reboot_id";
++    public static final String PREF_DOWNLOAD_SOURCE = "download_source";
+ 
+     public static final String UNCRYPT_FILE_EXT = ".uncrypt";
+ 
+diff --git a/app/src/main/java/org/lineageos/updater/misc/Mirrors.java b/app/src/main/java/org/lineageos/updater/misc/Mirrors.java
+new file mode 100644
+index 0000000..c74446d
+--- /dev/null
++++ b/app/src/main/java/org/lineageos/updater/misc/Mirrors.java
+@@ -0,0 +1,204 @@
++/*
++ * Copyright (C) 2025 The LineageOS Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.lineageos.updater.misc;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++import android.os.SystemClock;
++import android.util.Log;
++
++import androidx.preference.PreferenceManager;
++
++import java.io.InputStream;
++import java.net.HttpURLConnection;
++import java.net.URL;
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++import java.util.concurrent.Callable;
++import java.util.concurrent.CancellationException;
++import java.util.concurrent.ExecutionException;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++import java.util.concurrent.Future;
++import java.util.concurrent.TimeUnit;
++
++public final class Mirrors {
++
++    private static final String TAG = "Mirrors";
++
++    // 順序固定；index 存在 SharedPreferences
++    public static final String SOURCE_AUTO = "auto";
++    public static final String[] IDS      = {"auto", "github", "gh-proxy.com", "gh.llkk.cc", "ghfast.top"};
++    public static final String[] PREFIXES = {null,   "",       "https://gh-proxy.com/", "https://gh.llkk.cc/", "https://ghfast.top/"};
++
++    private static final String GITHUB_PREFIX = "https://github.com/";
++    private static final String GITHUB_RAW_PREFIX = "https://raw.githubusercontent.com/";
++
++    private static final int CONNECT_TIMEOUT_MS = 4000;
++    private static final int READ_TIMEOUT_MS = 6000;
++    private static final int PROBE_MAX_BYTES = 1048576;
++    private static final long PROBE_TIMEOUT_SECONDS = 12;
++
++    private Mirrors() {
++    }
++
++    public static boolean isGithubUrl(String url) {
++        if (url == null) {
++            return false;
++        }
++        return url.startsWith(GITHUB_PREFIX) || url.startsWith(GITHUB_RAW_PREFIX);
++    }
++
++    public static String apply(String url, int index) {
++        if (index < 1 || index >= PREFIXES.length || PREFIXES[index] == null) {
++            return url;
++        }
++        if (!isGithubUrl(url)) {
++            return url;
++        }
++        return PREFIXES[index] + url;
++    }
++
++    public static int getSelected(Context context) {
++        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
++        int selected = preferences.getInt(Constants.PREF_DOWNLOAD_SOURCE, 0);
++        if (selected < 0 || selected >= IDS.length) {
++            return 0;
++        }
++        return selected;
++    }
++
++    /**
++     * background thread only
++     */
++    public static long probe(String url) {
++        HttpURLConnection connection = null;
++        try {
++            connection = (HttpURLConnection) new URL(url).openConnection();
++            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
++            connection.setReadTimeout(READ_TIMEOUT_MS);
++            connection.setInstanceFollowRedirects(true);
++            connection.setRequestProperty("Range", "bytes=0-1048575");
++            connection.connect();
++            int responseCode = connection.getResponseCode();
++            if (responseCode != HttpURLConnection.HTTP_OK &&
++                    responseCode != HttpURLConnection.HTTP_PARTIAL) {
++                Log.d(TAG, "Probe got HTTP " + responseCode + " for " + url);
++                return -1;
++            }
++            long start = SystemClock.elapsedRealtime();
++            long read = 0;
++            try (InputStream inputStream = connection.getInputStream()) {
++                byte[] buffer = new byte[8192];
++                int count;
++                while (read < PROBE_MAX_BYTES && (count = inputStream.read(buffer)) > 0) {
++                    read += count;
++                }
++            }
++            long elapsed = SystemClock.elapsedRealtime() - start;
++            if (read == 0 || elapsed <= 0) {
++                return -1;
++            }
++            return read * 1000 / elapsed;
++        } catch (Exception e) {
++            Log.d(TAG, "Probe failed for " + url, e);
++            return -1;
++        } finally {
++            if (connection != null) {
++                connection.disconnect();
++            }
++        }
++    }
++
++    /**
++     * background thread only
++     */
++    public static long[] probeAll(String url) {
++        long[] speeds = new long[IDS.length];
++        Arrays.fill(speeds, -1);
++        ExecutorService executor = Executors.newFixedThreadPool(4);
++        try {
++            List<Callable<Long>> tasks = new ArrayList<>();
++            for (int i = 1; i < IDS.length; i++) {
++                final int index = i;
++                tasks.add(() -> probe(apply(url, index)));
++            }
++            List<Future<Long>> results = executor.invokeAll(tasks, PROBE_TIMEOUT_SECONDS,
++                    TimeUnit.SECONDS);
++            for (int i = 0; i < results.size(); i++) {
++                try {
++                    speeds[i + 1] = results.get(i).get();
++                } catch (CancellationException | ExecutionException e) {
++                    speeds[i + 1] = -1;
++                }
++            }
++        } catch (InterruptedException e) {
++            Log.d(TAG, "Probe interrupted", e);
++            Thread.currentThread().interrupt();
++        } finally {
++            executor.shutdownNow();
++        }
++        return speeds;
++    }
++
++    /**
++     * background thread only
++     */
++    public static String choose(Context context, String url) {
++        if (!isGithubUrl(url)) {
++            return url;
++        }
++        int selected = getSelected(context);
++        if (selected != 0) {
++            return apply(url, selected);
++        }
++        long[] speeds = probeAll(url);
++        int bestIndex = -1;
++        long bestSpeed = 0;
++        for (int i = 1; i < speeds.length; i++) {
++            if (speeds[i] > bestSpeed) {
++                bestSpeed = speeds[i];
++                bestIndex = i;
++            }
++        }
++        if (bestIndex == -1) {
++            Log.d(TAG, "All mirrors failed, using the original url");
++            return url;
++        }
++        Log.d(TAG, "Selected " + IDS[bestIndex] + " at " + bestSpeed + " B/s");
++        return apply(url, bestIndex);
++    }
++
++    public static List<String> feedCandidates(Context context, String url) {
++        List<String> candidates = new ArrayList<>();
++        candidates.add(url);
++        if (!isGithubUrl(url)) {
++            return candidates;
++        }
++        int selected = getSelected(context);
++        if (selected != 0) {
++            candidates.set(0, apply(url, selected));
++        }
++        for (int i = 1; i < IDS.length; i++) {
++            String candidate = apply(url, i);
++            if (!candidates.contains(candidate)) {
++                candidates.add(candidate);
++            }
++        }
++        return candidates;
++    }
++}
+diff --git a/app/src/main/res/drawable/xz1c_addon_chip.xml b/app/src/main/res/drawable/xz1c_addon_chip.xml
+new file mode 100644
+index 0000000..69ab4a4
+--- /dev/null
++++ b/app/src/main/res/drawable/xz1c_addon_chip.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- XZ1C: outlined pill for the add-on buttons on the Updater header. -->
++<ripple xmlns:android="http://schemas.android.com/apk/res/android"
++    android:color="?android:attr/colorControlHighlight">
++    <item>
++        <shape android:shape="rectangle">
++            <corners android:radius="18dp" />
++            <stroke android:width="1dp" android:color="?android:attr/textColorSecondary" />
++        </shape>
++    </item>
++</ripple>
+diff --git a/app/src/main/res/layout/activity_updates.xml b/app/src/main/res/layout/activity_updates.xml
+index adfe1a2..5ac0731 100644
+--- a/app/src/main/res/layout/activity_updates.xml
++++ b/app/src/main/res/layout/activity_updates.xml
+@@ -85,6 +85,27 @@
+                     android:textColor="?android:attr/textColorPrimary"
+                     android:textSize="12sp"
+                     tools:text="Last checked: 1970-01-01"/>
++
++                <!-- XZ1C: add-on packages (Google services / Sony services) -->
++                <LinearLayout
++                    android:id="@+id/addons_row"
++                    android:layout_width="wrap_content"
++                    android:layout_height="wrap_content"
++                    android:layout_below="@id/header_last_check"
++                    android:layout_marginTop="14dp"
++                    android:orientation="horizontal">
++
++                    <TextView
++                        android:id="@+id/addon_gapps"
++                        style="@style/XZ1CAddonChip"
++                        android:layout_marginEnd="10dp"
++                        tools:text="+ Google services"/>
++
++                    <TextView
++                        android:id="@+id/addon_sony"
++                        style="@style/XZ1CAddonChip"
++                        tools:text="+ Sony services"/>
++                </LinearLayout>
+             </RelativeLayout>
+ 
+             <androidx.appcompat.widget.Toolbar
+diff --git a/app/src/main/res/layout/preferences_dialog.xml b/app/src/main/res/layout/preferences_dialog.xml
+index c1b4356..0b6cce2 100644
+--- a/app/src/main/res/layout/preferences_dialog.xml
++++ b/app/src/main/res/layout/preferences_dialog.xml
+@@ -60,4 +60,33 @@
+         android:layout_marginBottom="16dp"
+         android:text="@string/menu_update_recovery"
+         android:textSize="16sp" />
++
++    <LinearLayout
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:layout_marginBottom="16dp"
++        android:orientation="horizontal">
++
++        <TextView
++            android:layout_width="0dp"
++            android:layout_height="wrap_content"
++            android:layout_weight="1"
++            android:text="@string/menu_download_source"
++            android:textColor="@color/inverted"
++            android:textSize="16sp" />
++
++        <Spinner
++            android:id="@+id/preferences_download_source"
++            android:layout_width="0dp"
++            android:layout_height="wrap_content"
++            android:layout_weight="1" />
++    </LinearLayout>
++
++    <Button
++        android:id="@+id/preferences_download_test"
++        style="?android:attr/borderlessButtonStyle"
++        android:layout_width="wrap_content"
++        android:layout_height="wrap_content"
++        android:layout_gravity="end"
++        android:text="@string/menu_download_test" />
+ </LinearLayout>
+diff --git a/app/src/main/res/values-zh-rCN/strings.xml b/app/src/main/res/values-zh-rCN/strings.xml
+index cbdedcd..53a4adf 100644
+--- a/app/src/main/res/values-zh-rCN/strings.xml
++++ b/app/src/main/res/values-zh-rCN/strings.xml
+@@ -60,6 +60,10 @@
+     <string name="menu_show_changelog">显示更新日志</string>
+     <string name="menu_ab_perf_mode">更新进程优先</string>
+     <string name="menu_update_recovery">更新恢复模式</string>
++    <string name="menu_download_source">下载来源</string>
++    <string name="menu_download_test">测速</string>
++    <string name="menu_download_testing">测速中…</string>
++    <string name="menu_download_failed">失败</string>
+     <string name="toast_forced_update_recovery">在此设备上禁用 Lineage 恢复更新是不可能的。</string>
+     <string name="snack_updates_found">找到新更新</string>
+     <string name="snack_no_updates_found">没有找到新的更新</string>
+@@ -127,4 +131,29 @@
+     <string name="local_update_name">本地更新</string>
+     <string name="welcome_title">欢迎</string>
+     <string name="welcome_message">请注意，当有多个更新可用时，无需逐个更新，可以直接安装最新的更新，然后安全地删除旧的更新以释放存储空间。</string>
++
++    <!-- XZ1C: add-on packages -->
++    <string name="addon_gapps">Google 服务</string>
++    <string name="addon_sony">Sony 服务</string>
++    <string name="addon_install_fmt">+ %1$s</string>
++    <string name="addon_installed_fmt">✓ %1$s</string>
++    <string name="addon_checking">正在检查…</string>
++    <string name="addon_install_message">下载 %1$s（%2$s）？下载完成后手机会重启进入恢复模式安装，数据不受影响。</string>
++    <string name="addon_reinstall_message">已经安装。要重新下载 %1$s（%2$s）并再安装一次吗？</string>
++    <string name="addon_download">下载</string>
++    <string name="addon_downloading">正在下载… %1$d%%</string>
++    <string name="addon_verifying">正在校验…</string>
++    <string name="addon_ready_message">%1$s 已下载并校验通过。现在重启安装吗？装完会自动回到系统。</string>
++    <string name="addon_restart_install">重启并安装</string>
++    <string name="addon_checksum_failed">下载的文件已损坏（校验不符），请重试。</string>
++    <string name="addon_unavailable">暂时无法下载（%1$s），请稍后再试。</string>
++    <string name="addon_failed">失败：%1$s</string>
++
++    <string-array name="menu_download_source_entries">
++        <item>自动（最快）</item>
++        <item>GitHub 直连</item>
++        <item>gh-proxy.com</item>
++        <item>gh.llkk.cc</item>
++        <item>ghfast.top</item>
++    </string-array>
+ </resources>
+diff --git a/app/src/main/res/values-zh-rTW/strings.xml b/app/src/main/res/values-zh-rTW/strings.xml
+index 51ac3db..f5d4c13 100644
+--- a/app/src/main/res/values-zh-rTW/strings.xml
++++ b/app/src/main/res/values-zh-rTW/strings.xml
+@@ -60,6 +60,10 @@
+     <string name="menu_show_changelog">顯示更新日誌</string>
+     <string name="menu_ab_perf_mode">優先更新過程</string>
+     <string name="menu_update_recovery">更新 Recovery</string>
++    <string name="menu_download_source">下載來源</string>
++    <string name="menu_download_test">測速</string>
++    <string name="menu_download_testing">測速中…</string>
++    <string name="menu_download_failed">失敗</string>
+     <string name="toast_forced_update_recovery">無法停用此裝置上的 Lineage Recovery 更新。</string>
+     <string name="snack_updates_found">發現新的更新</string>
+     <string name="snack_no_updates_found">沒有找到新的更新</string>
+@@ -125,4 +129,29 @@
+     <string name="local_update_import_failure">匯入本機更新檔案失敗</string>
+     <string name="local_update_import_install">安裝</string>
+     <string name="local_update_name">本機更新</string>
++
++    <!-- XZ1C: add-on packages -->
++    <string name="addon_gapps">Google 服務</string>
++    <string name="addon_sony">Sony 服務</string>
++    <string name="addon_install_fmt">+ %1$s</string>
++    <string name="addon_installed_fmt">✓ %1$s</string>
++    <string name="addon_checking">正在檢查…</string>
++    <string name="addon_install_message">下載 %1$s（%2$s）？下載完成後手機會重新啟動進入復原模式安裝，資料不受影響。</string>
++    <string name="addon_reinstall_message">已經安裝。要重新下載 %1$s（%2$s）並再安裝一次嗎？</string>
++    <string name="addon_download">下載</string>
++    <string name="addon_downloading">正在下載… %1$d%%</string>
++    <string name="addon_verifying">正在校驗…</string>
++    <string name="addon_ready_message">%1$s 已下載並校驗通過。現在重新啟動安裝嗎？裝完會自動回到系統。</string>
++    <string name="addon_restart_install">重新啟動並安裝</string>
++    <string name="addon_checksum_failed">下載的檔案已損壞（校驗不符），請重試。</string>
++    <string name="addon_unavailable">暫時無法下載（%1$s），請稍後再試。</string>
++    <string name="addon_failed">失敗：%1$s</string>
++
++    <string-array name="menu_download_source_entries">
++        <item>自動（最快）</item>
++        <item>GitHub 直連</item>
++        <item>gh-proxy.com</item>
++        <item>gh.llkk.cc</item>
++        <item>ghfast.top</item>
++    </string-array>
+ </resources>
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index 023d0b3..6af67c9 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -87,6 +87,10 @@
+     <string name="menu_changelog_url" translatable="false">https://download.lineageos.org/<xliff:g id="device_name">%1$s</xliff:g>/changes</string>
+     <string name="menu_ab_perf_mode">Prioritize update process</string>
+     <string name="menu_update_recovery">Update recovery</string>
++    <string name="menu_download_source">Download source</string>
++    <string name="menu_download_test">Test speed</string>
++    <string name="menu_download_testing">Testing…</string>
++    <string name="menu_download_failed">failed</string>
+     <string name="toast_forced_update_recovery">It is impossible to disable Lineage Recovery updates on this device.</string>
+ 
+     <string name="snack_updates_found">New updates found</string>
+@@ -176,4 +180,29 @@
+ 
+     <string name="welcome_title">Welcome</string>
+     <string name="welcome_message">Please note that when multiple updates are available, there is no need to go update-by-update, you can always install the latest one directly, and then safely delete old updates to free up storage space.</string>
++
++    <!-- XZ1C: add-on packages -->
++    <string name="addon_gapps">Google services</string>
++    <string name="addon_sony">Sony services</string>
++    <string name="addon_install_fmt">+ %1$s</string>
++    <string name="addon_installed_fmt">✓ %1$s</string>
++    <string name="addon_checking">Checking…</string>
++    <string name="addon_install_message">Download %1$s (%2$s)? After the download the phone restarts into recovery to install it. Your data is kept.</string>
++    <string name="addon_reinstall_message">Already installed. Download %1$s (%2$s) and install it again?</string>
++    <string name="addon_download">Download</string>
++    <string name="addon_downloading">Downloading… %1$d%%</string>
++    <string name="addon_verifying">Verifying…</string>
++    <string name="addon_ready_message">%1$s is downloaded and verified. Restart now to install it? The phone comes back by itself when done.</string>
++    <string name="addon_restart_install">Restart and install</string>
++    <string name="addon_checksum_failed">The download is damaged (checksum mismatch). Please try again.</string>
++    <string name="addon_unavailable">Can\'t download right now (%1$s). Please try again later.</string>
++    <string name="addon_failed">Failed: %1$s</string>
++
++    <string-array name="menu_download_source_entries">
++        <item>Auto (fastest)</item>
++        <item>GitHub direct</item>
++        <item>gh-proxy.com</item>
++        <item>gh.llkk.cc</item>
++        <item>ghfast.top</item>
++    </string-array>
+ </resources>
+diff --git a/app/src/main/res/values/styles.xml b/app/src/main/res/values/styles.xml
+index d0fabef..f18183e 100644
+--- a/app/src/main/res/values/styles.xml
++++ b/app/src/main/res/values/styles.xml
+@@ -28,4 +28,20 @@
+     <style name="AppTheme.AlertDialogTheme" parent="Theme.AppCompat.DayNight.Dialog.Alert">
+         <item name="dialogCornerRadius">16dp</item>
+     </style>
++
++    <!-- XZ1C: add-on buttons on the Updater header -->
++    <style name="XZ1CAddonChip">
++        <item name="android:layout_width">wrap_content</item>
++        <item name="android:layout_height">wrap_content</item>
++        <item name="android:background">@drawable/xz1c_addon_chip</item>
++        <item name="android:paddingStart">14dp</item>
++        <item name="android:paddingEnd">14dp</item>
++        <item name="android:paddingTop">8dp</item>
++        <item name="android:paddingBottom">8dp</item>
++        <item name="android:textSize">13sp</item>
++        <item name="android:textColor">?android:attr/textColorPrimary</item>
++        <item name="android:singleLine">true</item>
++        <item name="android:clickable">true</item>
++        <item name="android:focusable">true</item>
++    </style>
+ </resources>
+-- 
+2.43.0
+

@@ -1,0 +1,49 @@
+From 5c3ac2ee45fbed0dddf22af2ca6fd4a4021e9338 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 15 Oct 2026 12:40:12 +0800
+Subject: [PATCH 2/2] =?UTF-8?q?xz1c:=20=E9=A0=90=E8=A8=AD=E9=97=9C?=
+ =?UTF-8?q?=E9=96=89=E9=9B=99=E6=93=8A=E4=BA=AE=E5=B1=8F=E3=80=81=E9=96=8B?=
+ =?UTF-8?q?=E5=95=9F=E9=9F=B3=E9=87=8F=E9=8D=B5=E5=96=9A=E9=86=92?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I74607b5c4f02b31998095e5a033a58279cdb22f8
+---
+ packages/LineageSettingsProvider/res/values/defaults.xml      | 4 ++++
+ .../org/lineageos/lineagesettings/LineageDatabaseHelper.java  | 3 +++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/packages/LineageSettingsProvider/res/values/defaults.xml b/packages/LineageSettingsProvider/res/values/defaults.xml
+index 9a5b2348..70ca2788 100644
+--- a/packages/LineageSettingsProvider/res/values/defaults.xml
++++ b/packages/LineageSettingsProvider/res/values/defaults.xml
+@@ -57,6 +57,10 @@
+     <!-- Default value for swapping volume keys on rotation -->
+     <bool name="def_swap_volume_keys_on_rotation">false</bool>
+ 
++    <!-- Default for LineageSettings.System.VOLUME_WAKE_SCREEN
++         xz1c: 音量鍵喚醒預設開啟，取代雙擊亮屏 -->
++    <bool name="def_volume_wake_screen">true</bool>
++
+     <!-- Default for LineageSettings.System.STATUS_BAR_BATTERY_STYLE
+          * 0: Display the battery as icon in portrait mode
+          * 1: Display the battery as a circle
+diff --git a/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java b/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java
+index 16010910..850377ae 100644
+--- a/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java
++++ b/packages/LineageSettingsProvider/src/org/lineageos/lineagesettings/LineageDatabaseHelper.java
+@@ -453,6 +453,9 @@ public class LineageDatabaseHelper extends SQLiteOpenHelper{
+             loadBooleanSetting(stmt, LineageSettings.System.SWAP_VOLUME_KEYS_ON_ROTATION,
+                     R.bool.def_swap_volume_keys_on_rotation);
+ 
++            loadBooleanSetting(stmt, LineageSettings.System.VOLUME_WAKE_SCREEN,
++                    R.bool.def_volume_wake_screen);
++
+             loadIntegerSetting(stmt, LineageSettings.System.STATUS_BAR_BATTERY_STYLE,
+                     R.integer.def_battery_style);
+ 
+-- 
+2.43.0
+

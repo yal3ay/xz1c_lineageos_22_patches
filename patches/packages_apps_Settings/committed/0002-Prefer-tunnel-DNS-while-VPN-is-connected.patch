@@ -1,0 +1,105 @@
+From 31b4b85ce4ae1e20b957e4d07c51b4bc27d836e9 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Sun, 4 Oct 2026 16:11:38 +0800
+Subject: [PATCH 2/3] Prefer tunnel DNS while VPN is connected
+
+Change-Id: I92875f8835b921914668081130a64a0451721b52
+---
+ res/values-zh-rCN/xz1c_dns_strings.xml              |  1 +
+ res/values-zh-rTW/xz1c_dns_strings.xml              |  1 +
+ res/values/xz1c_dns_strings.xml                     |  1 +
+ .../network/PrivateDnsPreferenceController.java     | 13 +++++++++++++
+ 4 files changed, 16 insertions(+)
+
+diff --git a/res/values-zh-rCN/xz1c_dns_strings.xml b/res/values-zh-rCN/xz1c_dns_strings.xml
+index 840b955e312..20019c73a77 100644
+--- a/res/values-zh-rCN/xz1c_dns_strings.xml
++++ b/res/values-zh-rCN/xz1c_dns_strings.xml
+@@ -5,4 +5,5 @@
+     <string name="private_dns_alidns_doh3">自定义 · DoH3 (HTTP/3)</string>
+     <string name="private_dns_alidns_doq">自定义 · DoQ</string>
+     <string name="private_dns_alidns_info">可修改下方服务器。DoH、DoH3 填 HTTPS 网址；DoT、DoQ 填主机名，可附端口。连接失败时不回退到明文；解析服务器仍可看到查询内容。</string>
++    <string name="private_dns_vpn_override">使用 VPN 设置的解析服务；退出 VPN 后恢复私人 DNS</string>
+ </resources>
+diff --git a/res/values-zh-rTW/xz1c_dns_strings.xml b/res/values-zh-rTW/xz1c_dns_strings.xml
+index 5dab8bafaa6..dbdbea47436 100644
+--- a/res/values-zh-rTW/xz1c_dns_strings.xml
++++ b/res/values-zh-rTW/xz1c_dns_strings.xml
+@@ -5,4 +5,5 @@
+     <string name="private_dns_alidns_doh3">自訂 · DoH3 (HTTP/3)</string>
+     <string name="private_dns_alidns_doq">自訂 · DoQ</string>
+     <string name="private_dns_alidns_info">可修改下方伺服器。DoH、DoH3 填 HTTPS 網址；DoT、DoQ 填主機名稱，可附連接埠。連線失敗時不退回明文；解析伺服器仍可看到查詢內容。</string>
++    <string name="private_dns_vpn_override">使用 VPN 設定的解析服務；退出 VPN 後恢復私人 DNS</string>
+ </resources>
+diff --git a/res/values/xz1c_dns_strings.xml b/res/values/xz1c_dns_strings.xml
+index eb2da9bf9a3..78286b0d011 100644
+--- a/res/values/xz1c_dns_strings.xml
++++ b/res/values/xz1c_dns_strings.xml
+@@ -5,4 +5,5 @@
+     <string name="private_dns_alidns_doh3">Custom · DoH3 (HTTP/3)</string>
+     <string name="private_dns_alidns_doq">Custom · DoQ</string>
+     <string name="private_dns_alidns_info">Edit the server below. For DoH and DoH3, enter an HTTPS URL; for DoT and DoQ, enter a hostname and optional port. Queries remain encrypted; the server can still see their contents.</string>
++    <string name="private_dns_vpn_override">Using the VPN resolver; private DNS resumes outside the VPN</string>
+ </resources>
+diff --git a/src/com/android/settings/network/PrivateDnsPreferenceController.java b/src/com/android/settings/network/PrivateDnsPreferenceController.java
+index 46c822dbbcc..193476d4629 100644
+--- a/src/com/android/settings/network/PrivateDnsPreferenceController.java
++++ b/src/com/android/settings/network/PrivateDnsPreferenceController.java
+@@ -32,6 +32,7 @@ import android.net.ConnectivityManager.NetworkCallback;
+ import android.net.ConnectivitySettingsManager;
+ import android.net.LinkProperties;
+ import android.net.Network;
++import android.net.NetworkCapabilities;
+ import android.net.Uri;
+ import android.os.Handler;
+ import android.os.Looper;
+@@ -73,6 +74,7 @@ public class PrivateDnsPreferenceController extends BasePreferenceController
+     private final ContentObserver mSettingsObserver;
+     private final ConnectivityManager mConnectivityManager;
+     private LinkProperties mLatestLinkProperties;
++    private NetworkCapabilities mLatestNetworkCapabilities;
+     private Preference mPreference;
+ 
+     public PrivateDnsPreferenceController(Context context) {
+@@ -112,6 +114,7 @@ public class PrivateDnsPreferenceController extends BasePreferenceController
+         final Network defaultNetwork = mConnectivityManager.getActiveNetwork();
+         if (defaultNetwork != null) {
+             mLatestLinkProperties = mConnectivityManager.getLinkProperties(defaultNetwork);
++            mLatestNetworkCapabilities = mConnectivityManager.getNetworkCapabilities(defaultNetwork);
+         }
+         mConnectivityManager.registerDefaultNetworkCallback(mNetworkCallback, mHandler);
+     }
+@@ -128,6 +131,10 @@ public class PrivateDnsPreferenceController extends BasePreferenceController
+         final ContentResolver cr = mContext.getContentResolver();
+         final int mode = ConnectivitySettingsManager.getPrivateDnsMode(mContext);
+         final LinkProperties lp = mLatestLinkProperties;
++        if (mode != PRIVATE_DNS_MODE_OFF && mLatestNetworkCapabilities != null
++                && mLatestNetworkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
++            return res.getString(R.string.private_dns_vpn_override);
++        }
+         final List<InetAddress> dnses = (lp == null) ? null : lp.getValidatedPrivateDnsServers();
+         final boolean dnsesResolved = !ArrayUtils.isEmpty(dnses);
+         switch (mode) {
+@@ -186,6 +193,11 @@ public class PrivateDnsPreferenceController extends BasePreferenceController
+     }
+ 
+     private final NetworkCallback mNetworkCallback = new NetworkCallback() {
++        @Override
++        public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
++            mLatestNetworkCapabilities = capabilities;
++            if (mPreference != null) updateState(mPreference);
++        }
+         @Override
+         public void onLinkPropertiesChanged(Network network, LinkProperties lp) {
+             mLatestLinkProperties = lp;
+@@ -196,6 +208,7 @@ public class PrivateDnsPreferenceController extends BasePreferenceController
+         @Override
+         public void onLost(Network network) {
+             mLatestLinkProperties = null;
++            mLatestNetworkCapabilities = null;
+             if (mPreference != null) {
+                 updateState(mPreference);
+             }
+-- 
+2.43.0
+

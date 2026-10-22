@@ -1,0 +1,278 @@
+From a94d0c20e2bce94273b4bc8113301c75786c2e8f Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:15 +0800
+Subject: [PATCH] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I388cbf13444bf3ebb68c1ac2445f911b19d0ba1d
+---
+ .../StatusBarTouchController.java             | 11 +++-
+ res/values-zh-rCN/strings.xml                 |  1 +
+ res/values/strings.xml                        |  4 ++
+ .../model/SdCardAvailableReceiver.java        | 36 ++++++++++-
+ .../launcher3/model/WorkspaceItemProcessor.kt | 59 ++++++++++++++++---
+ .../launcher3/touch/ItemClickHandler.java     | 32 ++++++++++
+ 6 files changed, 131 insertions(+), 12 deletions(-)
+
+diff --git a/quickstep/src/com/android/launcher3/uioverrides/touchcontrollers/StatusBarTouchController.java b/quickstep/src/com/android/launcher3/uioverrides/touchcontrollers/StatusBarTouchController.java
+index cb2c324e5d..f704559c68 100644
+--- a/quickstep/src/com/android/launcher3/uioverrides/touchcontrollers/StatusBarTouchController.java
++++ b/quickstep/src/com/android/launcher3/uioverrides/touchcontrollers/StatusBarTouchController.java
+@@ -62,7 +62,11 @@ public class StatusBarTouchController implements TouchController {
+         mLauncher = l;
+         mSystemUiProxy = SystemUiProxy.INSTANCE.get(mLauncher);
+         // Guard against TAPs by increasing the touch slop.
+-        mTouchSlop = 2 * ViewConfiguration.get(l).getScaledTouchSlop();
++        // 原本是 2 * scaledTouchSlop（320dpi 下约 32px），加上下面那条"横向一超阈值
++        // 就永久放弃"，导致桌面中间下滑打开通知栏很不稳定：拇指下滑天然带弧线，
++        // 横向分量一反超就整个手势作废。4.6 寸小屏尤其明显。
++        // 改回单倍阈值，横向容忍度在下面单独放宽。
++        mTouchSlop = ViewConfiguration.get(l).getScaledTouchSlop();
+         mDownEvents = new SparseArray<>();
+     }
+ 
+@@ -112,7 +116,10 @@ public class StatusBarTouchController implements TouchController {
+                 setWindowSlippery(true);
+                 return true;
+             }
+-            if (Math.abs(dx) > mTouchSlop) {
++            // 横向容忍度放宽到 3 倍：只有明显是横向手势才放弃。
++            // 注意上面的 dy > Math.abs(dx) 必须保留 —— 那是区分"下拉通知栏"和
++            // "左右翻页"的关键，去掉会让翻页很难用。
++            if (Math.abs(dx) > 3 * mTouchSlop) {
+                 mCanIntercept = false;
+             }
+         }
+diff --git a/res/values-zh-rCN/strings.xml b/res/values-zh-rCN/strings.xml
+index edc56466d8..8c5f7a9058 100644
+--- a/res/values-zh-rCN/strings.xml
++++ b/res/values-zh-rCN/strings.xml
+@@ -23,6 +23,7 @@
+     <string name="work_folder_name" msgid="3753320833950115786">"Work"</string>
+     <string name="activity_not_found" msgid="8071924732094499514">"未安装该应用。"</string>
+     <string name="activity_not_available" msgid="7456344436509528827">"应用不可用"</string>
++    <string name="app_awaiting_storage">"SD 卡尚未就绪，请稍后重试"</string>
+     <string name="safemode_shortcut_error" msgid="9160126848219158407">"安全模式下不允许使用下载的此应用"</string>
+     <string name="safemode_widget_error" msgid="4863470563535682004">"安全模式下不允许使用微件"</string>
+     <string name="shortcut_not_available" msgid="2536503539825726397">"无法使用快捷方式"</string>
+diff --git a/res/values/strings.xml b/res/values/strings.xml
+index cdfbefea64..63fefcb310 100644
+--- a/res/values/strings.xml
++++ b/res/values/strings.xml
+@@ -28,6 +28,10 @@
+     <string name="activity_not_found">App isn\'t installed.</string>
+     <!-- Displayed when user selects a shortcut for an app that is current not available [CHAR_LIMIT=none]-->
+     <string name="activity_not_available">App isn\'t available</string>
++    <!-- Shown when an app cannot start because the storage volume holding it has not been
++         mounted yet. Adopted (SD card) storage is only mounted a few seconds into boot, so the
++         app is not missing, just not ready. [CHAR LIMIT=NONE] -->
++    <string name="app_awaiting_storage">SD card isn\'t ready yet, try again in a moment</string>
+     <!-- SafeMode shortcut error string -->
+     <string name="safemode_shortcut_error">Downloaded app disabled in Safe mode</string>
+     <!-- SafeMode widget error string -->
+diff --git a/src/com/android/launcher3/model/SdCardAvailableReceiver.java b/src/com/android/launcher3/model/SdCardAvailableReceiver.java
+index 9e3f0e1aa2..bf7cacbade 100644
+--- a/src/com/android/launcher3/model/SdCardAvailableReceiver.java
++++ b/src/com/android/launcher3/model/SdCardAvailableReceiver.java
+@@ -20,11 +20,11 @@ import android.content.BroadcastReceiver;
+ import android.content.Context;
+ import android.content.Intent;
+ import android.content.pm.LauncherApps;
++import android.content.pm.PackageManager;
+ import android.os.UserHandle;
+ 
+ import com.android.launcher3.LauncherAppState;
+ import com.android.launcher3.LauncherModel;
+-import com.android.launcher3.util.ApplicationInfoWrapper;
+ import com.android.launcher3.util.PackageUserKey;
+ 
+ import java.util.ArrayList;
+@@ -49,6 +49,38 @@ public class SdCardAvailableReceiver extends BroadcastReceiver {
+         mPackages = packages;
+     }
+ 
++    /**
++     * Whether PackageManager still has any record of this package.
++     *
++     * <p>This replaces the original {@code ApplicationInfoWrapper.isOnSdCard()} check, which
++     * cannot answer the question for adoptable storage. That wrapper discards the
++     * ApplicationInfo unless {@code FLAG_INSTALLED} is set, and a package living on a private
++     * volume that has not been mounted yet does not have it — so {@code isOnSdCard()} returned
++     * false and the shortcut was deleted as though the app had been uninstalled.
++     *
++     * <p>Adopted volumes are only mounted once StorageManagerService reaches
++     * {@code PHASE_BOOT_COMPLETED} (see {@code resetIfBootedAndConnected()}), which is the same
++     * moment ACTION_BOOT_COMPLETED is broadcast. By the time this receiver runs the volume is
++     * therefore routinely still unmounted, making the loss reproducible on every boot rather
++     * than merely racy.
++     *
++     * <p>Asking whether PackageManager knows the package at all is both simpler and safer: one
++     * that is merely waiting for its volume is still known, while a genuinely uninstalled one is
++     * not. Real uninstalls arrive through the normal PACKAGE_REMOVED path and never reach this
++     * receiver, so erring towards "unavailable" costs at most a temporarily greyed-out icon,
++     * whereas erring the other way deletes the user's workspace layout for good.
++     */
++    private static boolean isKnownToPackageManager(
++            Context context, String packageName, UserHandle user) {
++        try {
++            return context.getSystemService(LauncherApps.class)
++                    .getApplicationInfo(packageName, PackageManager.MATCH_UNINSTALLED_PACKAGES,
++                            user) != null;
++        } catch (PackageManager.NameNotFoundException e) {
++            return false;
++        }
++    }
++
+     @Override
+     public void onReceive(Context context, Intent intent) {
+         final LauncherApps launcherApps = context.getSystemService(LauncherApps.class);
+@@ -59,7 +91,7 @@ public class SdCardAvailableReceiver extends BroadcastReceiver {
+             final ArrayList<String> packagesUnavailable = new ArrayList<>();
+ 
+             if (!launcherApps.isPackageEnabled(puk.mPackageName, user)) {
+-                if (new ApplicationInfoWrapper(context, puk.mPackageName, user).isOnSdCard()) {
++                if (isKnownToPackageManager(context, puk.mPackageName, user)) {
+                     packagesUnavailable.add(puk.mPackageName);
+                 } else {
+                     packagesRemoved.add(puk.mPackageName);
+diff --git a/src/com/android/launcher3/model/WorkspaceItemProcessor.kt b/src/com/android/launcher3/model/WorkspaceItemProcessor.kt
+index e86b5926a6..ac80de7903 100644
+--- a/src/com/android/launcher3/model/WorkspaceItemProcessor.kt
++++ b/src/com/android/launcher3/model/WorkspaceItemProcessor.kt
+@@ -175,17 +175,60 @@ class WorkspaceItemProcessor(
+                     "Activity not enabled for id=${c.id}, component=$cn, user=${c.user}." +
+                         " Will attempt to find fallback Activity for targetPkg=$targetPkg.",
+                 )
+-                intent = pmHelper.getAppLaunchIntent(targetPkg, c.user)
+-                if (intent != null) {
++                val fallbackIntent = pmHelper.getAppLaunchIntent(targetPkg, c.user)
++                if (fallbackIntent != null) {
++                    intent = fallbackIntent
+                     c.restoreFlag = 0
+                     c.updater().put(Favorites.INTENT, intent.toUri(0)).commit()
+                 } else {
+-                    c.markDeleted(
+-                        "No Activities found for id=${c.id}, targetPkg=$targetPkg, component=$cn." +
+-                            " Unable to create launch Intent.",
+-                        RestoreError.APP_NO_LAUNCH_INTENT,
+-                    )
+-                    return
++                    // 包是「已启用」的（validTarget 为 true 才会进到这里），却解析不出
++                    // 任何可启动的 Activity。这通常不是「被卸载了」，而是应用在往/从
++                    // 融卡（adoptable storage）搬家时的中间态：PackageManager 已报告
++                    // 包可用，但组件索引尚未就绪。
++                    //
++                    // 实测（2026-09-20，本机）：把「闲鱼」移到融卡后桌面图标被删除，
++                    // Launcher 的 FileLog 记录为
++                    //   WorkspaceItemProcessor: Activity not enabled for id=23 ...
++                    //   LoaderCursor: No Activities found ... Unable to create launch Intent.
++                    // 数据库里该条 favorites 记录被直接删掉，重启也回不来。
++                    //
++                    // 注意：下方处理 !validTarget 的 when 块本来就有 SD 卡保护
++                    // （isOnSdCard / !isSdCardReady 时保留图标），但因为这里
++                    // validTarget == true，执行流根本到不了那里，于是走了删除。
++                    // 这里补上同样的保护，保持两条路径行为一致。
++                    //
++                    // 真正的卸载不受影响：那会走 onPackageRemoved -> OP_REMOVE，
++                    // 由 PackageUpdatedTask 正常清理。
++                    when {
++                        appInfoWrapper.isOnSdCard() -> {
++                            FileLog.d(
++                                TAG,
++                                "No launch intent yet for id=${c.id}, targetPkg=$targetPkg on" +
++                                    " sdcard/adopted storage. Keeping icon as unavailable" +
++                                    " instead of deleting.",
++                            )
++                            disabledState =
++                                disabledState or WorkspaceItemInfo.FLAG_DISABLED_NOT_AVAILABLE
++                            allowMissingTarget = true
++                        }
++                        !isSdCardReady -> {
++                            FileLog.d(
++                                TAG,
++                                "No launch intent yet for id=${c.id}, targetPkg=$targetPkg and" +
++                                    " sdcard is not ready. Will check later, keeping icon.",
++                            )
++                            pendingPackages.add(PackageUserKey(targetPkg, c.user))
++                            allowMissingTarget = true
++                        }
++                        else -> {
++                            c.markDeleted(
++                                "No Activities found for id=${c.id}, targetPkg=$targetPkg," +
++                                    " component=$cn. Unable to create launch Intent.",
++                                RestoreError.APP_NO_LAUNCH_INTENT,
++                            )
++                            return
++                        }
++                    }
+                 }
+             }
+         }
+diff --git a/src/com/android/launcher3/touch/ItemClickHandler.java b/src/com/android/launcher3/touch/ItemClickHandler.java
+index 639cefe131..2ee3ff1f67 100644
+--- a/src/com/android/launcher3/touch/ItemClickHandler.java
++++ b/src/com/android/launcher3/touch/ItemClickHandler.java
+@@ -21,6 +21,7 @@ import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCH
+ import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_PRIVATE_SPACE_INSTALL_APP_BUTTON_TAP;
+ import static com.android.launcher3.model.data.ItemInfoWithIcon.FLAG_DISABLED_BY_PUBLISHER;
+ import static com.android.launcher3.model.data.ItemInfoWithIcon.FLAG_DISABLED_LOCKED_USER;
++import static com.android.launcher3.model.data.ItemInfoWithIcon.FLAG_DISABLED_NOT_AVAILABLE;
+ import static com.android.launcher3.model.data.ItemInfoWithIcon.FLAG_DISABLED_QUIET_USER;
+ import static com.android.launcher3.model.data.ItemInfoWithIcon.FLAG_DISABLED_SAFEMODE;
+ import static com.android.launcher3.model.data.ItemInfoWithIcon.FLAG_DISABLED_SUSPENDED;
+@@ -32,6 +33,7 @@ import android.content.ComponentName;
+ import android.content.Context;
+ import android.content.Intent;
+ import android.content.pm.LauncherApps;
++import android.content.pm.PackageManager;
+ import android.content.pm.PackageInstaller.SessionInfo;
+ import android.os.Process;
+ import android.text.TextUtils;
+@@ -303,12 +305,42 @@ public class ItemClickHandler {
+             } else if ((shortcut.runtimeStatusFlags & FLAG_DISABLED_BY_PUBLISHER) != 0
+                     || (shortcut.runtimeStatusFlags & FLAG_DISABLED_LOCKED_USER) != 0) {
+                 error = R.string.shortcut_not_available;
++            } else if ((shortcut.runtimeStatusFlags & FLAG_DISABLED_NOT_AVAILABLE) != 0
++                    && isAwaitingStorage(context, shortcut)) {
++                error = R.string.app_awaiting_storage;
+             }
+             Toast.makeText(context, error, Toast.LENGTH_SHORT).show();
+             return true;
+         }
+     }
+ 
++    /**
++     * Whether this item is unavailable only because the storage volume holding it has not been
++     * mounted yet, rather than because the app is gone.
++     *
++     * <p>Apps on adoptable storage are unavailable for the first seconds after boot: the volume
++     * is mounted only once StorageManagerService reaches {@code PHASE_BOOT_COMPLETED}. Telling
++     * the user the app "isn\'t available" in that window is misleading — nothing is wrong and it
++     * will start working shortly.
++     *
++     * <p>The test is the same one {@code SdCardAvailableReceiver} uses: PackageManager still has
++     * a record of a package that is merely waiting for its volume, and none of one that has
++     * really been uninstalled.
++     */
++    private static boolean isAwaitingStorage(Context context, WorkspaceItemInfo shortcut) {
++        ComponentName cn = shortcut.getTargetComponent();
++        if (cn == null) {
++            return false;
++        }
++        try {
++            return context.getSystemService(LauncherApps.class)
++                    .getApplicationInfo(cn.getPackageName(),
++                            PackageManager.MATCH_UNINSTALLED_PACKAGES, shortcut.user) != null;
++        } catch (PackageManager.NameNotFoundException e) {
++            return false;
++        }
++    }
++
+     private static boolean maybeCreateAlertDialogForShortcut(final WorkspaceItemInfo shortcut,
+             Context context) {
+         try {
+-- 
+2.43.0
+

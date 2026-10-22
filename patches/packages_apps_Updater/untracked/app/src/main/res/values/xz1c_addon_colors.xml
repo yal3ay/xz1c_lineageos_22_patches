@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- XZ1C: follows the system theme colour (Settings > Display > Theme colour); green by default -->
+<resources>
+    <color name="addon_background">@android:color/system_neutral1_10</color>
+    <color name="addon_foreground">@android:color/system_neutral1_900</color>
+    <color name="addon_secondary">@android:color/system_neutral2_700</color>
+    <color name="addon_surface">@android:color/system_accent1_50</color>
+    <color name="addon_accent">@android:color/system_accent1_600</color>
+    <color name="addon_error">#A73530</color>
+</resources>

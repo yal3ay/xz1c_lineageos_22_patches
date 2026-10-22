@@ -1,0 +1,15 @@
+diff --git a/res/xml/display_settings.xml b/res/xml/display_settings.xml
+index 2e9231984ce..3cda6ea138f 100644
+--- a/res/xml/display_settings.xml
++++ b/res/xml/display_settings.xml
+@@ -106,9 +106,8 @@
+             settings:controller="com.android.settings.display.NightDisplayPreferenceController"
+             settings:keywords="@string/keywords_display_night_display"/>
+ 
+-        <!-- XZ1C: Sony-style image quality settings -->
+         <lineageos.preference.LineagePartsPreference
+-            android:key="image_quality"
++            android:key="livedisplay"
+             settings:requiresConfig="@*lineageos.platform:bool/config_enableLiveDisplay" />
+ 
+         <Preference

@@ -1,0 +1,157 @@
+From 8305e93f4e36ce6ba65ae72818b0d6e128eb3eab Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 10 Sep 2026 18:24:15 +0800
+Subject: [PATCH 2/6] =?UTF-8?q?SystemUI:=20HD=20=E5=9B=BE=E6=A0=87?=
+ =?UTF-8?q?=E8=B7=9F=E9=9A=8F=204G=20=E9=AB=98=E6=B8=85=E9=80=9A=E8=AF=9D?=
+ =?UTF-8?q?=E5=BC=80=E5=85=B3=20+=20=E5=AD=97=E5=BD=A2=E5=8A=A0=E7=B2=97?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change-Id: I4292f1b348b665829a257d5baa2368c6a6e5c31a
+---
+ .../SystemUI/res/drawable/stat_sys_volte.xml  |  4 +
+ .../statusbar/phone/PhoneStatusBarPolicy.java | 75 ++++++++-----------
+ 2 files changed, 37 insertions(+), 42 deletions(-)
+
+diff --git a/packages/SystemUI/res/drawable/stat_sys_volte.xml b/packages/SystemUI/res/drawable/stat_sys_volte.xml
+index 6f159f7a4..012ada706 100644
+--- a/packages/SystemUI/res/drawable/stat_sys_volte.xml
++++ b/packages/SystemUI/res/drawable/stat_sys_volte.xml
+@@ -42,9 +42,13 @@
+         android:pathData="M 1.2 4 H 13.7 V 13.2 H 1.2 V 4 Z" />
+     <path
+         android:fillColor="#FFFFFF"
++        android:strokeColor="#FFFFFF"
++        android:strokeWidth="0.5"
+         android:pathData="M1.9,12.6V4h0.8v3.5h3.2V4h0.8v8.6H5.9v-4H2.7v4H1.9z" />
+     <path
+         android:fillColor="#FFFFFF"
++        android:strokeColor="#FFFFFF"
++        android:strokeWidth="0.5"
+         android:pathData="M8,12.6V4h2.1c0.5,0,0.8,0,1.1,0.1c0.4,0.1,0.7,0.3,0.9,0.6c0.3,0.4,0.6,0.9,0.7,1.5s0.2,1.3,0.2,2c0,0.7-0.1,1.2-0.2,1.7c-0.1,0.5-0.2,0.9-0.4,1.3S12.2,11.8,12,12s-0.4,0.3-0.7,0.4s-0.6,0.1-1,0.1H8zM8.8,11.6h1.3c0.4,0,0.7-0.1,0.9-0.2c0.2-0.1,0.4-0.3,0.5-0.4c0.2-0.3,0.3-0.6,0.4-1.1c0.1-0.5,0.2-1,0.2-1.7c0-0.9-0.1-1.6-0.3-2.1c-0.2-0.5-0.5-0.8-0.8-1C11,5.1,10.6,5,10.1,5H8.8V11.6z" />
+     <path
+         android:fillColor="#000000"
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java b/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java
+index 6c0124e1c..e71693376 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java
+@@ -36,6 +36,7 @@ import android.media.AudioManager;
+ import android.net.ConnectivityManager;
+ import android.net.Network;
+ import android.net.NetworkCapabilities;
++import android.database.ContentObserver;
+ import android.os.Handler;
+ import android.os.Looper;
+ import android.os.Process;
+@@ -140,8 +141,6 @@ public class PhoneStatusBarPolicy
+      *  槽位已正式登记在 core/res 的 config_statusBarIcons 里，位置紧挨 status_bar_mobile 之前 ——
+      *  该数组的顺序就是状态栏从左到右的顺序，所以图标显示在信号格左侧。 */
+     private final String mSlotVolte;
+-    private ImsMmTelManager mVolteImsManager;
+-    private int mVolteSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+     private boolean mVolteAvailable;
+     private final String mSlotManagedProfile;
+     private final String mSlotRotate;
+@@ -1093,66 +1092,58 @@ public class PhoneStatusBarPolicy
+ 
+     // ==================== 4G 高清通话（VoLTE）状态图标 ====================
+     //
+-    // 数据源用 IMS 注册回调，而不是「设置里的 VoLTE 开关」——
+-    // 开关只表示用户意愿，注册成功才代表真的能打高清通话。
+-    // 只在 TRANSPORT_TYPE_WWAN 上显示；走 WLAN 注册的是 VoWiFi，不属于 4G 高清通话。
+-
+-    // 用 MmTel「语音能力」而不是「IMS 注册状态」作为判据：
+-    //   * 注册状态在关掉 4G 高清通话开关后依然为 true（IMS 仍为短信等业务保持注册），
+-    //     所以图标不会消失 —— 2026-09-10 实测到的问题。
+-    //   * 语音能力（CAPABILITY_TYPE_VOICE）同时反映用户开关与注册结果，
+-    //     即「此刻能不能打高清通话」，正是图标该表达的含义。
+-    private final ImsMmTelManager.CapabilityCallback mVolteCapabilityCallback =
+-            new ImsMmTelManager.CapabilityCallback() {
++    // 判据就是「设置 → 4G 高清通话」这个开关本身（isAdvancedCallingSettingEnabled）：
++    // 开关打开就显示 HD，关闭就隐藏 —— 用户 2026-09-10 明确要求的绑定关系。
++    //
++    // 走过的两条弯路，别再改回去：
++    //   * IMS 注册状态（RegistrationCallback）：关掉开关后依然是 true
++    //     （IMS 还要为短信等业务保持注册），图标不会消失。
++    //   * MmTel 语音能力（CAPABILITY_TYPE_VOICE）：还取决于网络实际协商结果，
++    //     开关开了但没注册上时不显示，跟「跟着开关走」的直觉不符。
++    //
++    // 开关的变化通过 SubscriptionManager.ADVANCED_CALLING_ENABLED_CONTENT_URI 观察 ——
++    // 这正是 setAdvancedCallingSettingEnabled() 真正写入的那张表。
++
++    private final ContentObserver mVolteSettingObserver =
++            new ContentObserver(new Handler(Looper.getMainLooper())) {
+                 @Override
+-                public void onCapabilitiesStatusChanged(MmTelFeature.MmTelCapabilities capabilities) {
+-                    setVolteAvailable(capabilities != null
+-                            && capabilities.isCapable(MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE));
++                public void onChange(boolean selfChange) {
++                    mUiBgExecutor.execute(() -> refreshVolteIcon());
+                 }
+             };
+ 
+     private void registerVolteListeners() {
+         SubscriptionManager sm = mContext.getSystemService(SubscriptionManager.class);
+         if (sm != null) {
+-            // 换卡/默认语音卡变化时要重新挂回调
++            // 换卡 / 默认语音卡变化时重新读一次
+             sm.addOnSubscriptionsChangedListener(mUiBgExecutor,
+                     new SubscriptionManager.OnSubscriptionsChangedListener() {
+                         @Override
+                         public void onSubscriptionsChanged() {
+-                            updateVolteSubscription();
++                            refreshVolteIcon();
+                         }
+                     });
+         }
+-        mUiBgExecutor.execute(this::updateVolteSubscription);
++        mContext.getContentResolver().registerContentObserver(
++                SubscriptionManager.ADVANCED_CALLING_ENABLED_CONTENT_URI,
++                true /* notifyForDescendants */, mVolteSettingObserver);
++        mUiBgExecutor.execute(this::refreshVolteIcon);
+     }
+ 
+-    private void updateVolteSubscription() {
++    /** 读一次「4G 高清通话」开关并同步图标显隐。会走 binder，必须在后台线程调用。 */
++    private void refreshVolteIcon() {
++        boolean enabled = false;
+         final int subId = SubscriptionManager.getDefaultVoiceSubscriptionId();
+-        if (subId == mVolteSubId && mVolteImsManager != null) {
+-            return;
+-        }
+-        if (mVolteImsManager != null) {
++        if (SubscriptionManager.isValidSubscriptionId(subId)) {
+             try {
+-                mVolteImsManager.unregisterMmTelCapabilityCallback(mVolteCapabilityCallback);
+-            } catch (Exception e) {
+-                Log.w(TAG, "unregisterMmTelCapabilityCallback failed", e);
++                enabled = ImsMmTelManager.createForSubscriptionId(subId)
++                        .isAdvancedCallingSettingEnabled();
++            } catch (RuntimeException e) {
++                // 机器不支持 IMS，或此刻拿不到 —— 图标保持隐藏即可
++                Log.w(TAG, "isAdvancedCallingSettingEnabled failed for subId=" + subId, e);
+             }
+-            mVolteImsManager = null;
+-        }
+-        mVolteSubId = subId;
+-        setVolteAvailable(false);
+-        if (!SubscriptionManager.isValidSubscriptionId(subId)) {
+-            return;
+-        }
+-        try {
+-            ImsMmTelManager manager = ImsMmTelManager.createForSubscriptionId(subId);
+-            manager.registerMmTelCapabilityCallback(mUiBgExecutor, mVolteCapabilityCallback);
+-            mVolteImsManager = manager;
+-        } catch (ImsException | IllegalArgumentException | UnsupportedOperationException e) {
+-            // 机器不支持 IMS 或此刻拿不到，图标保持隐藏即可
+-            Log.w(TAG, "registerMmTelCapabilityCallback failed for subId=" + subId, e);
+-            mVolteImsManager = null;
+         }
++        setVolteAvailable(enabled);
+     }
+ 
+     private void setVolteAvailable(boolean available) {
+-- 
+2.43.0
+

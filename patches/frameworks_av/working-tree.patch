@@ -1,0 +1,1082 @@
+diff --git a/media/libmediaplayerservice/nuplayer/NuPlayer.cpp b/media/libmediaplayerservice/nuplayer/NuPlayer.cpp
+index bd43fe265a..371dde4ab3 100644
+--- a/media/libmediaplayerservice/nuplayer/NuPlayer.cpp
++++ b/media/libmediaplayerservice/nuplayer/NuPlayer.cpp
+@@ -38,6 +38,7 @@
+ #include <timedtext/TextDescriptions.h>
+ 
+ #include <cutils/properties.h>
++#include <media/AudioSystem.h>
+ 
+ #include <media/AudioResamplerPublic.h>
+ #include <media/AVSyncSettings.h>
+@@ -65,6 +66,62 @@
+ 
+ namespace android {
+ 
++// xz1c: system-wide DSEE HX (Hi-Fi Audio app). Applies only while music goes to wired
++// headphones: Sony's HAL runs DSEE nowhere else, and other routes keep compress offload.
++static bool xz1cIsLosslessAudio(const sp<AMessage>& format) {
++    AString mime;
++    return format != NULL && format->findString("mime", &mime)
++            && (!strcasecmp(mime.c_str(), MEDIA_MIMETYPE_AUDIO_FLAC)
++                || !strcasecmp(mime.c_str(), MEDIA_MIMETYPE_AUDIO_RAW)
++                || !strcasecmp(mime.c_str(), MEDIA_MIMETYPE_AUDIO_ALAC));
++}
++
++// xz1c: "MP3/128/44100/16/<session>" for the Hi-Fi Audio card ("Source: MP3 · 128 kbps").
++static void xz1cPublishSource(const sp<AMessage>& format, int session) {
++    AString mime;
++    if (format == NULL || !format->findString("mime", &mime)) return;
++    const char* m = mime.c_str();
++    const char* codec = !strcasecmp(m, MEDIA_MIMETYPE_AUDIO_MPEG) ? "MP3"
++            : !strcasecmp(m, MEDIA_MIMETYPE_AUDIO_AAC) ? "AAC"
++            : !strcasecmp(m, MEDIA_MIMETYPE_AUDIO_FLAC) ? "FLAC"
++            : !strcasecmp(m, MEDIA_MIMETYPE_AUDIO_ALAC) ? "ALAC"
++            : !strcasecmp(m, MEDIA_MIMETYPE_AUDIO_RAW) ? "PCM"
++            : !strcasecmp(m, MEDIA_MIMETYPE_AUDIO_VORBIS) ? "Vorbis"
++            : !strcasecmp(m, MEDIA_MIMETYPE_AUDIO_OPUS) ? "Opus"
++            : !strcasecmp(m, MEDIA_MIMETYPE_AUDIO_AC3) ? "AC3"
++            : !strcasecmp(m, MEDIA_MIMETYPE_AUDIO_EAC3) ? "EAC3"
++            : !strcasecmp(m, MEDIA_MIMETYPE_AUDIO_AMR_NB) ? "AMR"
++            : NULL;
++    if (codec == NULL) {
++        const char* slash = strchr(m, '/');
++        codec = slash != NULL ? slash + 1 : m;
++    }
++    int32_t bitrate = 0, rate = 0, bits = 0;
++    format->findInt32("bitrate", &bitrate);
++    format->findInt32("sample-rate", &rate);
++    format->findInt32("bits-per-sample", &bits);
++    property_set("sys.xz1c.audio.source", String8::format("%s/%d/%d/%d/%d", codec,
++            bitrate > 0 ? (bitrate + 500) / 1000 : 0, rate, bits, session).c_str());
++}
++
++static bool xz1cDseeGlobal() {
++    if (!property_get_bool("persist.sys.xz1c.dsee_global", false)) return false;
++    audio_attributes_t aa = AUDIO_ATTRIBUTES_INITIALIZER;
++    aa.usage = AUDIO_USAGE_MEDIA;
++    aa.content_type = AUDIO_CONTENT_TYPE_MUSIC;
++    AudioDeviceTypeAddrVector devices;
++    if (AudioSystem::getDevicesForAttributes(aa, &devices, false /* forVolume */) != OK) {
++        return false;
++    }
++    for (const auto& device : devices) {
++        if (device.mType == AUDIO_DEVICE_OUT_WIRED_HEADPHONE
++                || device.mType == AUDIO_DEVICE_OUT_WIRED_HEADSET) {
++            return true;
++        }
++    }
++    return false;
++}
++
+ struct NuPlayer::Action : public RefBase {
+     Action() {}
+ 
+@@ -763,6 +820,35 @@ void NuPlayer::onMessageReceived(const sp<AMessage> &msg) {
+             break;
+         }
+ 
++        case kWhatPollHiresDirect:
++        {
++            int32_t generation;
++            CHECK(msg->findInt32("generation", &generation));
++            if (generation != mRendererGeneration || mResetting || !mStarted
++                    || mSource == NULL || mRenderer == NULL) {
++                break; // Stop polling a retired playback instance.
++            }
++            const bool enabled = property_get_bool("persist.sys.xz1c.hires_direct", false);
++            // Serialize on NuPlayer's looper; defer during pause, seek and decoder flush.
++            if (enabled != mXz1cHiresDirectApplied && !mPaused && !mAudioEOS
++                    && mFlushingAudio == NONE && mFlushingVideo == NONE
++                    && !mResumePending && mDeferredActions.empty()) {
++                int64_t positionUs;
++                if (getCurrentPosition(&positionUs) == OK) {
++                    ALOGI("xz1c: live lossless direct %d -> %d at %lld us",
++                            mXz1cHiresDirectApplied, enabled, (long long)positionUs);
++                    mXz1cHiresDirectApplied = enabled;
++                    // Reuse route-change recovery, seeking to the current position.
++                    // Decode PCM so the direct switch, rather than compress offload,
++                    // chooses the new output. DSEE requests remain independent.
++                    restartAudio(positionUs, true /* forceNonOffload */,
++                                 true /* needsToCreateAudioDecoder */);
++                }
++            }
++            msg->post(500000LL);
++            break;
++        }
++
+         case kWhatPollDuration:
+         {
+             int32_t generation;
+@@ -1597,7 +1683,8 @@ void NuPlayer::onStart(int64_t startPositionUs, MediaPlayerSeekMode mode) {
+ 
+     mOffloadAudio =
+         canOffloadStream(audioMeta, hasVideo, mSource->isStreaming(), streamType)
+-                && (mPlaybackSettings.mSpeed == 1.f && mPlaybackSettings.mPitch == 1.f);
++                && (mPlaybackSettings.mSpeed == 1.f && mPlaybackSettings.mPitch == 1.f)
++                && !(mXz1cDsee || xz1cDseeGlobal());
+ 
+     // Modular DRM: Disabling audio offload if the source is protected
+     if (mOffloadAudio && mIsDrmProtected) {
+@@ -1641,6 +1728,16 @@ void NuPlayer::onStart(int64_t startPositionUs, MediaPlayerSeekMode mode) {
+     startPlaybackTimer("onstart");
+ 
+     postScanSources();
++
++    // xz1c: apply lossless direct changes to seekable music without restarting the app.
++    if (hasAudio && !hasVideo && (mSourceFlags & Source::FLAG_CAN_SEEK)
++            && mAudioSink != NULL && mAudioSink->getAudioStreamType() == AUDIO_STREAM_MUSIC
++            && xz1cIsLosslessAudio(mSource->getFormat(true /* audio */))) {
++        mXz1cHiresDirectApplied = property_get_bool("persist.sys.xz1c.hires_direct", false);
++        sp<AMessage> poll = new AMessage(kWhatPollHiresDirect, this);
++        poll->setInt32("generation", mRendererGeneration);
++        poll->post(500000LL);
++    }
+ }
+ 
+ void NuPlayer::startPlaybackTimer(const char *where) {
+@@ -1719,6 +1816,11 @@ void NuPlayer::updateInternalTimers() {
+     updateRebufferingTimer(false /* stopping */, false /* exiting */);
+ }
+ 
++void NuPlayer::setXz1cDsee(bool enabled) {
++    ALOGI("xz1c: DSEE HX %s for this player", enabled ? "requested" : "off");
++    mXz1cDsee = enabled;
++}
++
+ void NuPlayer::setTargetBitrate(int bitrate) {
+     if (mSource != NULL) {
+         mSource->setTargetBitrate(bitrate);
+@@ -1908,7 +2010,8 @@ void NuPlayer::determineAudioModeChange(const sp<AMessage> &audioFormat) {
+     const bool hasVideo = (videoFormat != NULL);
+     bool canOffload = canOffloadStream(
+             audioMeta, hasVideo, mSource->isStreaming(), streamType)
+-                    && (mPlaybackSettings.mSpeed == 1.f && mPlaybackSettings.mPitch == 1.f);
++                    && (mPlaybackSettings.mSpeed == 1.f && mPlaybackSettings.mPitch == 1.f)
++                    && !(mXz1cDsee || xz1cDseeGlobal());
+ 
+     // Modular DRM: Disabling audio offload if the source is protected
+     if (canOffload && mIsDrmProtected) {
+@@ -1984,6 +2087,7 @@ status_t NuPlayer::instantiateDecoder(
+     Mutex::Autolock autoLock(mDecoderLock);
+ 
+     if (audio) {
++        xz1cPublishSource(format, mAudioSink != NULL ? (int)mAudioSink->getSessionId() : 0);
+         sp<AMessage> notify = new AMessage(kWhatAudioNotify, this);
+         ++mAudioDecoderGeneration;
+         notify->setInt32("generation", mAudioDecoderGeneration);
+@@ -2001,6 +2105,7 @@ status_t NuPlayer::instantiateDecoder(
+         } else {
+             mSource->setOffloadAudio(false /* offload */);
+ 
++            format->setInt32("xz1c-dsee", (mXz1cDsee || xz1cDseeGlobal()) ? 1 : 0);
+             *decoder = new Decoder(notify, mSource, mPID, mUID, mRenderer);
+             ALOGV("instantiateDecoder audio Decoder");
+         }
+diff --git a/media/libmediaplayerservice/nuplayer/NuPlayerDecoder.cpp b/media/libmediaplayerservice/nuplayer/NuPlayerDecoder.cpp
+index 3987a675e8..edc56aa26f 100644
+--- a/media/libmediaplayerservice/nuplayer/NuPlayerDecoder.cpp
++++ b/media/libmediaplayerservice/nuplayer/NuPlayerDecoder.cpp
+@@ -39,6 +39,7 @@
+ #include <media/stagefright/MediaCodec.h>
+ #include <media/stagefright/MediaDefs.h>
+ #include <media/stagefright/MediaErrors.h>
++#include <media/stagefright/Utils.h>
+ #include <media/stagefright/SurfaceUtils.h>
+ #include <mpeg2ts/ATSParser.h>
+ #include <gui/Surface.h>
+@@ -311,6 +312,18 @@ void NuPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
+ 
+     mIsAudio = !strncasecmp("audio/", mime.c_str(), 6);
+     mIsVideoAVC = !strcasecmp(MEDIA_MIMETYPE_VIDEO_AVC, mime.c_str());
++    mXz1cLossless = mIsAudio
++            && (!strcasecmp(MEDIA_MIMETYPE_AUDIO_FLAC, mime.c_str())
++                || !strcasecmp(MEDIA_MIMETYPE_AUDIO_RAW, mime.c_str())
++                || !strcasecmp(MEDIA_MIMETYPE_AUDIO_ALAC, mime.c_str()));
++    int32_t xz1cDsee = 0;
++    mXz1cDsee = mIsAudio && format->findInt32("xz1c-dsee", &xz1cDsee) && xz1cDsee;
++    if (mXz1cDsee) {
++        audio_format_t codec = AUDIO_FORMAT_DEFAULT;
++        mapMimeToAudioFormat(codec, mime.c_str());
++        mXz1cDseeCodec = (int32_t)codec;
++        if (!format->findInt32("bitrate", &mXz1cDseeBitrate)) mXz1cDseeBitrate = 0;
++    }
+ 
+     mComponentName = mime;
+     mComponentName.append(" decoder");
+@@ -852,6 +865,21 @@ void NuPlayer::Decoder::handleOutputFormatChange(const sp<AMessage> &format) {
+         } else {
+             flags = AUDIO_OUTPUT_FLAG_NONE;
+         }
++        // xz1c: lossless music goes to a direct output at its native rate / depth when the
++        // user turned it on. The renderer falls back to the original path if that fails.
++        int32_t xz1cRate = 0;
++        int32_t xz1cEncoding = 2 /* AudioFormat.ENCODING_PCM_16BIT */;
++        format->findInt32("sample-rate", &xz1cRate);
++        format->findInt32("pcm-encoding", &xz1cEncoding);
++        if (mXz1cDsee && !hasVideo && xz1cEncoding == 2 && xz1cRate > 0 && xz1cRate <= 48000) {
++            // Sony DSEE HX: plain DIRECT PCM16; the renderer passes the source format first
++            flags = AUDIO_OUTPUT_FLAG_DIRECT;
++            format->setInt32("xz1c-dsee-codec", mXz1cDseeCodec);
++            format->setInt32("xz1c-dsee-bitrate", mXz1cDseeBitrate);
++        } else if (mXz1cLossless && !hasVideo
++                && property_get_bool("persist.sys.xz1c.hires_direct", false)) {
++            flags = AUDIO_OUTPUT_FLAG_DIRECT;
++        }
+ 
+         sp<AMessage> reply = new AMessage(kWhatAudioOutputFormatChanged, this);
+         reply->setInt32("generation", mBufferGeneration);
+diff --git a/media/libmediaplayerservice/nuplayer/NuPlayerDriver.cpp b/media/libmediaplayerservice/nuplayer/NuPlayerDriver.cpp
+index 851d2522e3..c75e9ef9f1 100644
+--- a/media/libmediaplayerservice/nuplayer/NuPlayerDriver.cpp
++++ b/media/libmediaplayerservice/nuplayer/NuPlayerDriver.cpp
+@@ -860,6 +860,11 @@ void NuPlayerDriver::setAudioSink(const sp<AudioSink> &audioSink) {
+ 
+ status_t NuPlayerDriver::setParameter(
+         int key, const Parcel &request ) {
++    // xz1c: keep in sync with MediaPlayer.KEY_PARAMETER_XZ1C_DSEE
++    if (key == 0x5A1C) {
++        mPlayer->setXz1cDsee(request.readInt32() != 0);
++        return OK;
++    }
+     if (key == KEY_PARAMETER_RTP_ATTRIBUTES) {
+         mPlayer->setTargetBitrate(request.readInt32());
+         return OK;
+diff --git a/media/libmediaplayerservice/nuplayer/NuPlayerRenderer.cpp b/media/libmediaplayerservice/nuplayer/NuPlayerRenderer.cpp
+index 4ded33a7fa..b863f3656f 100644
+--- a/media/libmediaplayerservice/nuplayer/NuPlayerRenderer.cpp
++++ b/media/libmediaplayerservice/nuplayer/NuPlayerRenderer.cpp
+@@ -34,9 +34,11 @@
+ #include <media/stagefright/Utils.h>
+ #include <media/stagefright/VideoFrameScheduler.h>
+ #include <media/MediaCodecBuffer.h>
++#include <media/AudioSystem.h>
+ #include <utils/SystemClock.h>
+ 
+ #include <inttypes.h>
++#include <math.h>
+ 
+ #include <android-base/stringprintf.h>
+ using ::android::base::StringPrintf;
+@@ -156,7 +158,22 @@ NuPlayer::Renderer::Renderer(
+     (void)mSyncFlag.test_and_set();
+ }
+ 
++void NuPlayer::Renderer::xz1cClearStatus() {
++    if (mXz1cStatusSet) {
++        char status[PROPERTY_VALUE_MAX] = {};
++        property_get("sys.xz1c.audio.output", status, "");
++        const std::string value(status);
++        const std::string suffix = "/" + std::to_string((int)mAudioSink->getSessionId());
++        if (value.size() >= suffix.size()
++                && value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0) {
++            property_set("sys.xz1c.audio.output", "");
++        }
++        mXz1cStatusSet = false;
++    }
++}
++
+ NuPlayer::Renderer::~Renderer() {
++    xz1cClearStatus();
+     if (offloadingAudio()) {
+         mAudioSink->stop();
+         mAudioSink->flush();
+@@ -939,6 +956,22 @@ void NuPlayer::Renderer::notifyEOSCallback() {
+     notifyEOS_l(true /* audio */, ERROR_END_OF_STREAM);
+ }
+ 
++// xz1c: float [-1, 1) -> int32, in place (same sample size). Lossless for 16/24-bit sources.
++static void xz1cFloatToI32(void *data, size_t bytes) {
++    float *f = (float *)data;
++    int32_t *i = (int32_t *)data;
++    for (size_t n = 0; n < bytes / sizeof(float); n++) {
++        float v = f[n];
++        if (!(v > -1.0f)) {  // also catches NaN
++            i[n] = INT32_MIN;
++        } else if (v >= 1.0f) {
++            i[n] = INT32_MAX;
++        } else {
++            i[n] = (int32_t)lrintf(v * 2147483648.0f);
++        }
++    }
++}
++
+ size_t NuPlayer::Renderer::fillAudioBuffer(void *buffer, size_t size) {
+     Mutex::Autolock autoLock(mLock);
+ 
+@@ -982,6 +1015,9 @@ size_t NuPlayer::Renderer::fillAudioBuffer(void *buffer, size_t size) {
+         memcpy((char *)buffer + sizeCopied,
+                entry->mBuffer->data() + entry->mOffset,
+                copy);
++        if (mXz1cFloatToI32) {
++            xz1cFloatToI32((char *)buffer + sizeCopied, copy);
++        }
+ 
+         entry->mOffset += copy;
+         if (entry->mOffset == entry->mBuffer->size()) {
+@@ -1150,6 +1186,12 @@ bool NuPlayer::Renderer::onDrainAudioQueue() {
+ 
+         size_t copy = entry->mBuffer->size() - entry->mOffset;
+ 
++        if (mXz1cFloatToI32 && !entry->mXz1cConverted) {
++            // whole buffer once, before any part of it is written
++            xz1cFloatToI32(entry->mBuffer->data(), entry->mBuffer->size());
++            entry->mXz1cConverted = true;
++        }
++
+         ssize_t written = mAudioSink->write(entry->mBuffer->data() + entry->mOffset,
+                                             copy, false /* blocking */);
+         if (written < 0) {
+@@ -2102,6 +2144,12 @@ status_t NuPlayer::Renderer::onOpenAudioSink(
+                 }
+                 ALOGV_IF(err == OK, "openAudioSink: offload succeeded");
+             }
++            if (err == OK) {
++                // xz1c: the Hi-Fi Audio app shows "hardware decoding" instead of "mixer".
++                property_set("sys.xz1c.audio.output",
++                        String8::format("%d/16/offload/%d", sampleRate, (int)mAudioSink->getSessionId()).c_str());
++                mXz1cStatusSet = true;
++            }
+             if (err != OK) {
+                 // Clean up, fall back to non offload mode.
+                 mAudioSink->close();
+@@ -2161,18 +2209,90 @@ status_t NuPlayer::Renderer::onOpenAudioSink(
+         // We should always be able to set our playback settings if the sink is closed.
+         LOG_ALWAYS_FATAL_IF(mAudioSink->setPlaybackRate(mPlaybackSettings) != OK,
+                 "onOpenAudioSink: can't set playback rate on closed sink");
++        // xz1c: a direct output has no mixer to take float, so float becomes PCM_32_BIT here
++        // and is converted in onDrainAudioQueue / fillAudioBuffer.
++        const bool xz1cDirect = (pcmFlags & AUDIO_OUTPUT_FLAG_DIRECT) != 0;
++        const audio_format_t sinkFormat =
++                xz1cDirect && audioFormat == AUDIO_FORMAT_PCM_FLOAT
++                        ? AUDIO_FORMAT_PCM_32_BIT : audioFormat;
++        // The Qualcomm HAL opens direct PCM only as "PCM offload" and rejects it without
++        // offload info ("Unsupported Offload information", -EINVAL), so describe the stream.
++        audio_offload_info_t xz1cInfo = AUDIO_INFO_INITIALIZER;
++        int32_t xz1cDseeCodec = 0;
++        if (xz1cDirect && format->findInt32("xz1c-dsee-codec", &xz1cDseeCodec)) {
++            // dsee_create reads these when the stream opens; MP3 = AUDIO_FORMAT_MP3 etc.
++            int32_t dseeBitrate = 0;
++            format->findInt32("xz1c-dsee-bitrate", &dseeBitrate);
++            AudioSystem::setParameters(String8::format(
++                    "dsee_codec=%d;dsee_avg_bitrate=%d;dsee_has_video=0",
++                    xz1cDseeCodec, dseeBitrate));
++            ALOGI("xz1c: DSEE HX source codec %#x bitrate %d", xz1cDseeCodec, dseeBitrate);
++            // Register the session and switch DSEE on from here as well, so players that never
++            // call MediaPlayer.setDseeHxEnabled (system-wide DSEE) get it too.
++            AudioSystem::setParameters(String8::format(
++                    "s_e_client_session_id=%d;s_e_client_session_state=1",
++                    (int)mAudioSink->getSessionId()));
++            AudioSystem::setParameters(String8("dsee_hx_state=1"));
++        }
++        if (xz1cDirect) {
++            xz1cInfo.duration_us = -1;
++            format->findInt64("durationUs", &xz1cInfo.duration_us);
++            xz1cInfo.sample_rate = sampleRate;
++            xz1cInfo.channel_mask = channelMask == CHANNEL_MASK_USE_CHANNEL_ORDER
++                    ? audio_channel_out_mask_from_count(numChannels) : channelMask;
++            xz1cInfo.format = sinkFormat;
++            xz1cInfo.stream_type = AUDIO_STREAM_MUSIC;
++            int32_t bitRate = 0;
++            format->findInt32("bitrate", &bitRate);
++            xz1cInfo.bit_rate = bitRate;
++            xz1cInfo.has_video = hasVideo;
++            xz1cInfo.is_streaming = isStreaming;
++            xz1cInfo.bit_width = audio_bytes_per_sample(sinkFormat) * 8;
++            xz1cInfo.usage = AUDIO_USAGE_MEDIA;
++        }
+         status_t err = mAudioSink->open(
+                     sampleRate,
+                     numChannels,
+                     (audio_channel_mask_t)channelMask,
+-                    audioFormat,
++                    sinkFormat,
+                     0 /* bufferCount - unused */,
+                     mUseAudioCallback ? &NuPlayer::Renderer::AudioSinkCallback : NULL,
+                     mUseAudioCallback ? this : NULL,
+                     (audio_output_flags_t)pcmFlags,
++                    xz1cDirect ? &xz1cInfo : NULL,
++                    doNotReconnect,
++                    frameCount);
++        if (err != OK && xz1cDirect) {
++            // No direct profile for this rate / format: play it the usual way.
++            ALOGI("xz1c: direct %d Hz fmt %#x failed (%d), using deep buffer",
++                    sampleRate, sinkFormat, err);
++            mAudioSink->close();
++            err = mAudioSink->open(
++                    sampleRate,
++                    numChannels,
++                    (audio_channel_mask_t)channelMask,
++                    audioFormat,
++                    0 /* bufferCount - unused */,
++                    mUseAudioCallback ? &NuPlayer::Renderer::AudioSinkCallback : NULL,
++                    mUseAudioCallback ? this : NULL,
++                    AUDIO_OUTPUT_FLAG_DEEP_BUFFER,
+                     NULL,
+                     doNotReconnect,
+                     frameCount);
++            mXz1cFloatToI32 = false;
++        } else {
++            mXz1cFloatToI32 = err == OK && sinkFormat != audioFormat;
++            ALOGI_IF(err == OK && xz1cDirect, "xz1c: direct output %d Hz fmt %#x", sampleRate,
++                    sinkFormat);
++            if (err == OK && xz1cDirect) {
++                // xz1c: shown by the Hi-Fi Audio app ("now playing: 96kHz/24bit direct").
++                property_set("sys.xz1c.audio.output", String8::format("%d/%d/%s/%d", sampleRate,
++                        (int)audio_bytes_per_sample(sinkFormat) * 8,
++                        xz1cDseeCodec != 0 ? "dsee" : "direct",
++                        (int)mAudioSink->getSessionId()).c_str());
++                mXz1cStatusSet = true;
++            }
++        }
+         if (err != OK) {
+             ALOGW("openAudioSink: non offloaded open failed status: %d", err);
+             mAudioSink->close();
+@@ -2195,6 +2315,7 @@ status_t NuPlayer::Renderer::onOpenAudioSink(
+ 
+ void NuPlayer::Renderer::onCloseAudioSink() {
+     ATRACE_BEGIN("NuPlyer::Renderer::onCloseAudioSink");
++    xz1cClearStatus();
+     mAudioSink->close();
+     mCurrentOffloadInfo = AUDIO_INFO_INITIALIZER;
+     mCurrentPcmInfo = AUDIO_PCMINFO_INITIALIZER;
+diff --git a/media/libmediaplayerservice/nuplayer/include/nuplayer/NuPlayer.h b/media/libmediaplayerservice/nuplayer/include/nuplayer/NuPlayer.h
+index 7dc97ea029..4c989362b2 100644
+--- a/media/libmediaplayerservice/nuplayer/include/nuplayer/NuPlayer.h
++++ b/media/libmediaplayerservice/nuplayer/include/nuplayer/NuPlayer.h
+@@ -18,6 +18,8 @@
+ 
+ #define NU_PLAYER_H_
+ 
++#include <atomic>
++
+ #include <media/AudioResamplerPublic.h>
+ #include <mediadrm/ICrypto.h>
+ #include <media/MediaPlayerInterface.h>
+@@ -103,6 +105,8 @@ struct NuPlayer : public AHandler {
+     void updateInternalTimers();
+ 
+     void setTargetBitrate(int bitrate /* bps */);
++    // xz1c: Sony DSEE HX requested for this player (MediaPlayer.setDseeHxEnabled)
++    void setXz1cDsee(bool enabled);
+ 
+     void dump(AString& logString);
+ 
+@@ -156,6 +160,7 @@ private:
+         kWhatPause                      = 'paus',
+         kWhatResume                     = 'rsme',
+         kWhatPollDuration               = 'polD',
++        kWhatPollHiresDirect            = 'polH',
+         kWhatSourceNotify               = 'srcN',
+         kWhatGetTrackInfo               = 'gTrI',
+         kWhatGetSelectedTrack           = 'gSel',
+@@ -179,6 +184,10 @@ private:
+     sp<MediaPlayerBase::AudioSink> mAudioSink;
+     sp<DecoderBase> mVideoDecoder;
+     bool mOffloadAudio;
++    // xz1c: Sony's HAL runs DSEE HX only on a plain DIRECT PCM16 stream, never on compress
++    // offload, so a DSEE player decodes itself (see Decoder::handleOutputFormatChange)
++    std::atomic<bool> mXz1cDsee{false};
++    bool mXz1cHiresDirectApplied = false; // NuPlayer looper only.
+     sp<DecoderBase> mAudioDecoder;
+     Mutex mDecoderLock;  // guard |mAudioDecoder| and |mVideoDecoder|.
+     sp<CCDecoder> mCCDecoder;
+diff --git a/media/libmediaplayerservice/nuplayer/include/nuplayer/NuPlayerDecoder.h b/media/libmediaplayerservice/nuplayer/include/nuplayer/NuPlayerDecoder.h
+index 4a52b0c06a..2b4984f7ad 100644
+--- a/media/libmediaplayerservice/nuplayer/include/nuplayer/NuPlayerDecoder.h
++++ b/media/libmediaplayerservice/nuplayer/include/nuplayer/NuPlayerDecoder.h
+@@ -98,6 +98,12 @@ private:
+     int32_t mVideoHeight;
+     bool mIsAudio;
+     bool mIsVideoAVC;
++    // xz1c: source is lossless audio (FLAC / WAV / ALAC), candidate for direct output
++    bool mXz1cLossless = false;
++    // xz1c: DSEE HX for this player; source format / bit rate the Sony HAL wants as dsee_codec
++    bool mXz1cDsee = false;
++    int32_t mXz1cDseeCodec = 0;
++    int32_t mXz1cDseeBitrate = 0;
+     bool mIsSecure;
+     bool mIsEncrypted;
+     bool mIsEncryptedObservedEarlier;
+diff --git a/media/libmediaplayerservice/nuplayer/include/nuplayer/NuPlayerRenderer.h b/media/libmediaplayerservice/nuplayer/include/nuplayer/NuPlayerRenderer.h
+index cfa742e148..91420da364 100644
+--- a/media/libmediaplayerservice/nuplayer/include/nuplayer/NuPlayerRenderer.h
++++ b/media/libmediaplayerservice/nuplayer/include/nuplayer/NuPlayerRenderer.h
+@@ -149,6 +149,8 @@ private:
+         size_t mOffset;
+         status_t mFinalResult;
+         int32_t mBufferOrdinal;
++        // xz1c: buffer already converted float -> int32 in place (see mXz1cFloatToI32)
++        bool mXz1cConverted = false;
+     };
+ 
+     static const int64_t kMinPositionUpdateDelayUs;
+@@ -225,6 +227,11 @@ private:
+     int32_t mTotalBuffersQueued;
+     int32_t mLastAudioBufferDrained;
+     bool mUseAudioCallback;
++    // xz1c: sink opened DIRECT as PCM_32_BIT while the decoder outputs float
++    bool mXz1cFloatToI32 = false;
++    // xz1c: this renderer published its direct / DSEE output in sys.xz1c.audio.output
++    bool mXz1cStatusSet = false;
++    void xz1cClearStatus();
+ 
+     sp<AWakeLock> mWakeLock;
+ 
+diff --git a/services/audioflinger/Threads.cpp b/services/audioflinger/Threads.cpp
+index 2229655e26..23d1f26449 100644
+--- a/services/audioflinger/Threads.cpp
++++ b/services/audioflinger/Threads.cpp
+@@ -93,6 +93,8 @@
+ #include <fcntl.h>
+ #include <linux/futex.h>
+ #include <math.h>
++#include <cmath>
++#include <cinttypes>
+ #include <memory>
+ #include <pthread.h>
+ #include <sstream>
+@@ -2659,7 +2661,10 @@ sp<IAfTrack> PlaybackThread::createTrack_l(
+ 
+     case DIRECT:
+         if (audio_is_linear_pcm(format)) { // TODO maybe use audio_has_proportional_frames()?
+-            if (sampleRate != mSampleRate || format != mFormat || channelMask != mChannelMask) {
++            const bool xz1cFloatToInt32 = format == AUDIO_FORMAT_PCM_FLOAT
++                    && mFormat == AUDIO_FORMAT_PCM_32_BIT;
++            if (sampleRate != mSampleRate || (!xz1cFloatToInt32 && format != mFormat)
++                    || channelMask != mChannelMask) {
+                 ALOGE("createTrack_l() Bad parameter: sampleRate %u format %#x, channelMask 0x%08x "
+                         "for output %p with format %#x",
+                         sampleRate, format, channelMask, mOutput, mFormat);
+@@ -2935,6 +2940,18 @@ status_t PlaybackThread::addTrack_l(const sp<IAfTrack>& track)
+             sendIoConfigEvent_l(AUDIO_CLIENT_STARTED, track->creatorPid(), track->portId());
+         }
+ 
++        // xz1c: Sony's HAL enables DSEE HX on a direct stream only when the stream's
++        // track_session_id matches a session registered with s_e_client_session_id; Sony's own
++        // AudioFlinger passed it, AOSP never does (see dsee_is_se_client in out_write).
++        // Only on a change: addTrack_l runs again on every restart of the same track.
++        if (mType == DIRECT && mOutput != nullptr && mOutput->stream != nullptr
++                && track->sessionId() != mXz1cTrackSession
++                && property_get_bool("ro.somc.dseehx.supported", false)) {
++            mXz1cTrackSession = track->sessionId();
++            mOutput->stream->setParameters(
++                    String8::format("track_session_id=%d", track->sessionId()));
++        }
++
+         // set retry count for buffer fill
+         if (track->isOffloaded()) {
+             if (track->isStopping_1()) {
+@@ -3633,6 +3650,59 @@ ssize_t PlaybackThread::threadLoop_write()
+         }
+     }
+ 
++    // Measure only PCM actually accepted by the output. The UI renews a short
++    // lease; backgrounded/crashed UI cannot leave metering running indefinitely.
++    const int64_t xz1cNowMs = systemTime(SYSTEM_TIME_BOOTTIME) / 1000000;
++    if (xz1cNowMs - mXz1cMeterLastCheckMs >= 250) {
++        char lease[PROPERTY_VALUE_MAX] = {};
++        property_get("sys.xz1c.audio.meter_until", lease, "0");
++        mXz1cMeterEnabled = strtoll(lease, nullptr, 10) > xz1cNowMs;
++        mXz1cMeterLastCheckMs = xz1cNowMs;
++    }
++    const bool xz1cCanMeter = mXz1cMeterEnabled && bytesWritten > 0
++            && (mType == MIXER || mType == DIRECT)
++            && audio_is_linear_pcm(mFormat) && mHapticChannelMask == AUDIO_CHANNEL_NONE
++            && mXz1cMeterSession > 0;
++    if (!xz1cCanMeter || mXz1cMeterWindowSession != mXz1cMeterSession) {
++        mXz1cMeterSumSquares = 0;
++        mXz1cMeterPeak = 0;
++        mXz1cMeterSamples = 0;
++        mXz1cMeterLastPublishMs = xz1cNowMs;
++        mXz1cMeterWindowSession = mXz1cMeterSession;
++    }
++    if (xz1cCanMeter) {
++        const size_t sampleBytes = audio_bytes_per_sample(mFormat);
++        const size_t accepted = std::min<size_t>(static_cast<size_t>(bytesWritten), mBytesRemaining);
++        const auto* input = static_cast<const uint8_t*>(mSinkBuffer) + offset;
++        size_t remaining = sampleBytes == 0 ? 0 : accepted / sampleBytes;
++        float samples[256];
++        while (remaining > 0) {
++            const size_t n = std::min<size_t>(remaining, 256);
++            memcpy_by_audio_format(samples, AUDIO_FORMAT_PCM_FLOAT, input, mFormat, n);
++            for (size_t i = 0; i < n; ++i) {
++                const double value = samples[i];
++                if (!std::isfinite(value)) continue;
++                mXz1cMeterSumSquares += value * value;
++                mXz1cMeterPeak = std::max<double>(mXz1cMeterPeak, std::abs(value));
++                ++mXz1cMeterSamples;
++            }
++            input += n * sampleBytes;
++            remaining -= n;
++        }
++        if (xz1cNowMs - mXz1cMeterLastPublishMs >= 500 && mXz1cMeterSamples > 0) {
++            const double rms = sqrt(mXz1cMeterSumSquares / mXz1cMeterSamples);
++            const double rmsDb = rms > 0 ? 20 * log10(rms) : -120;
++            const double peakDb = mXz1cMeterPeak > 0 ? 20 * log10(mXz1cMeterPeak) : -120;
++            const std::string reading = String8::format("%.1f/%.1f/%d/%d/%" PRId64,
++                    rmsDb, peakDb, mXz1cMeterSession, mId, xz1cNowMs).c_str();
++            property_set("sys.xz1c.audio.level", reading.c_str());
++            mXz1cMeterSumSquares = 0;
++            mXz1cMeterPeak = 0;
++            mXz1cMeterSamples = 0;
++            mXz1cMeterLastPublishMs = xz1cNowMs;
++        }
++    }
++
+     mNumWrites++;
+     mInWrite = false;
+     if (mStandby) {
+@@ -5633,6 +5703,14 @@ PlaybackThread::mixer_state MixerThread::prepareTracks_l(
+     mTracks.clearDeletedTrackIds();
+ 
+     mixer_state mixerStatus = MIXER_IDLE;
++    // Report the actual USB output thread, not PROPERTY_OUTPUT_SAMPLE_RATE
++    // (which describes the primary phone output). Bind it to a ready media track.
++    const auto xz1cMixerDevices = outDeviceTypes_l();
++    const bool xz1cUsbMixer = mType == MIXER && xz1cMixerDevices.size() == 1
++            && (xz1cMixerDevices.count(AUDIO_DEVICE_OUT_USB_DEVICE)
++                || xz1cMixerDevices.count(AUDIO_DEVICE_OUT_USB_HEADSET));
++    std::string xz1cMixerStatus;
++    mXz1cMeterSession = AUDIO_SESSION_NONE;
+     // find out which tracks need to be processed
+     size_t count = mActiveTracks.size();
+     size_t mixedTracks = 0;
+@@ -6153,6 +6231,23 @@ PlaybackThread::mixer_state MixerThread::prepareTracks_l(
+             // XXX: these things DON'T need to be done each time
+             mAudioMixer->setBufferProvider(trackId, track->asExtendedAudioBufferProvider());
+             mAudioMixer->enable(trackId);
++            const auto xz1cAttr = track->attributes();
++            if (mType == MIXER && !track->isInvalid()
++                    && (xz1cAttr.usage == AUDIO_USAGE_MEDIA
++                        || (xz1cAttr.usage == AUDIO_USAGE_UNKNOWN
++                            && xz1cAttr.content_type == AUDIO_CONTENT_TYPE_MUSIC))) {
++                mXz1cMeterSession = track->sessionId();
++            }
++
++            if (xz1cUsbMixer && !track->isInvalid()
++                    && (xz1cAttr.usage == AUDIO_USAGE_MEDIA
++                        || (xz1cAttr.usage == AUDIO_USAGE_UNKNOWN
++                            && xz1cAttr.content_type == AUDIO_CONTENT_TYPE_MUSIC))) {
++                xz1cMixerStatus = String8::format("%u/%zu/mixed/%d/%d", mSampleRate,
++                        audio_bytes_per_sample(mHALFormat) * 8,
++                        track->sessionId(), mId).c_str();
++            }
++
+ 
+             mAudioMixer->setParameter(trackId, param, AudioMixer::VOLUME0, &vlf);
+             mAudioMixer->setParameter(trackId, param, AudioMixer::VOLUME1, &vrf);
+@@ -6460,6 +6555,21 @@ PlaybackThread::mixer_state MixerThread::prepareTracks_l(
+     if (fastTracks > 0) {
+         mixerStatus = MIXER_TRACKS_READY;
+     }
++    char xz1cPublishedMixer[PROPERTY_VALUE_MAX] = {};
++    property_get("sys.xz1c.audio.mixer_output", xz1cPublishedMixer, "");
++    if (!xz1cMixerStatus.empty()) {
++        if (xz1cMixerStatus != xz1cPublishedMixer) {
++            property_set("sys.xz1c.audio.mixer_output", xz1cMixerStatus.c_str());
++        }
++    } else {
++        // An idle output may clear only the status it owns, never another mixer.
++        const std::string owner = String8::format("/%d", mId).c_str();
++        const std::string published = xz1cPublishedMixer;
++        if (published.size() >= owner.size()
++                && published.compare(published.size() - owner.size(), owner.size(), owner) == 0) {
++            property_set("sys.xz1c.audio.mixer_output", "");
++        }
++    }
+     return mixerStatus;
+ }
+ 
+@@ -6791,6 +6901,11 @@ DirectOutputThread::DirectOutputThread(const sp<IAfThreadCallback>& afThreadCall
+ 
+ DirectOutputThread::~DirectOutputThread()
+ {
++    char status[PROPERTY_VALUE_MAX] = {};
++    property_get("sys.xz1c.audio.track_output", status, "");
++    if (!mXz1cTrackStatus.empty() && mXz1cTrackStatus == status) {
++        property_set("sys.xz1c.audio.track_output", "");
++    }
+ }
+ 
+ void DirectOutputThread::dumpInternals_l(int fd, const Vector<String16>& args)
+@@ -6949,6 +7064,7 @@ PlaybackThread::mixer_state DirectOutputThread::prepareTracks_l(
+     Vector<sp<IAfTrack>>* tracksToRemove
+ )
+ {
++
+     size_t count = mActiveTracks.size();
+     mixer_state mixerStatus = MIXER_IDLE;
+     bool doHwPause = false;
+@@ -7135,6 +7251,40 @@ PlaybackThread::mixer_state DirectOutputThread::prepareTracks_l(
+         }
+     }
+ 
++
++    const auto xz1cStatusTrack = mActiveTrack;
++    const auto xz1cStatusDevices = outDeviceTypes_l();
++    const bool xz1cPublishTrack = mixerStatus == MIXER_TRACKS_READY
++            && xz1cStatusTrack != nullptr && !xz1cStatusTrack->isInvalid()
++            && audio_is_linear_pcm(mFormat)
++            && xz1cStatusDevices.size() == 1
++            && (xz1cStatusDevices.count(AUDIO_DEVICE_OUT_WIRED_HEADPHONE)
++                || xz1cStatusDevices.count(AUDIO_DEVICE_OUT_WIRED_HEADSET)
++                || xz1cStatusDevices.count(AUDIO_DEVICE_OUT_USB_DEVICE)
++                || xz1cStatusDevices.count(AUDIO_DEVICE_OUT_USB_HEADSET));
++    char publishedStatus[PROPERTY_VALUE_MAX] = {};
++    property_get("sys.xz1c.audio.track_output", publishedStatus, "");
++    mXz1cMeterSession = mixerStatus == MIXER_TRACKS_READY
++            && xz1cStatusTrack != nullptr && !xz1cStatusTrack->isInvalid()
++            ? xz1cStatusTrack->sessionId() : AUDIO_SESSION_NONE;
++    if (xz1cPublishTrack) {
++        const std::string status = String8::format("%u/%u/direct/%d", mSampleRate,
++                (unsigned)(audio_bytes_per_sample(mFormat) * 8),
++                xz1cStatusTrack->sessionId()).c_str();
++        // A new direct thread can publish a session which then underruns during a track change.
++        // Reassert this thread while it remains the one actively writing.
++        if (status != mXz1cTrackStatus || status != publishedStatus) {
++            mXz1cTrackStatus = status;
++            property_set("sys.xz1c.audio.track_output", status.c_str());
++        }
++    } else if (mixerStatus == MIXER_IDLE && !mXz1cTrackStatus.empty()) {
++        // Do not leave an inactive session visible or clear another active thread's status.
++        if (mXz1cTrackStatus == publishedStatus) {
++            property_set("sys.xz1c.audio.track_output", "");
++        }
++        mXz1cTrackStatus.clear();
++    }
++
+     // if an active track did not command a flush, check for pending flush on stopped tracks
+     if (!mFlushPending) {
+         for (size_t i = 0; i < mTracks.size(); i++) {
+@@ -7184,7 +7334,14 @@ void DirectOutputThread::threadLoop_mix()
+             }
+             break;
+         }
+-        memcpy(curBuf, buffer.raw, buffer.frameCount * mFrameSize);
++        if (mFormat == AUDIO_FORMAT_PCM_32_BIT
++                && mActiveTrack->format() == AUDIO_FORMAT_PCM_FLOAT) {
++            // XZ1C: preserve sample rate; convert float samples to the HAL's int32 container.
++            memcpy_by_audio_format(curBuf, mFormat, buffer.raw, mActiveTrack->format(),
++                    buffer.frameCount * audio_channel_count_from_out_mask(mChannelMask));
++        } else {
++            memcpy(curBuf, buffer.raw, buffer.frameCount * mFrameSize);
++        }
+         frameCount -= buffer.frameCount;
+         curBuf += buffer.frameCount * mFrameSize;
+         mActiveTrack->releaseBuffer(&buffer);
+diff --git a/services/audioflinger/Threads.h b/services/audioflinger/Threads.h
+index 67843413f6..f3b3cb7922 100644
+--- a/services/audioflinger/Threads.h
++++ b/services/audioflinger/Threads.h
+@@ -952,6 +952,8 @@ public:
+         mTracks.add(track);
+     }
+ 
++    // xz1c: last session sent to the HAL as track_session_id (Sony DSEE HX)
++    audio_session_t mXz1cTrackSession = AUDIO_SESSION_NONE;
+ protected:
+     // Code snippets that were lifted up out of threadLoop()
+     virtual void threadLoop_mix() REQUIRES(ThreadBase_ThreadLoop) = 0;
+@@ -1260,6 +1262,17 @@ protected:
+ 
+     void*                           mSinkBuffer;         // frame size aligned sink buffer
+ 
++    // Digital PCM meter: thread-loop-only state, before HAL/DAC gain.
++    audio_session_t mXz1cMeterSession = AUDIO_SESSION_NONE;
++    audio_session_t mXz1cMeterWindowSession = AUDIO_SESSION_NONE;
++    int64_t mXz1cMeterLastCheckMs = 0;
++    int64_t mXz1cMeterLastPublishMs = 0;
++    bool mXz1cMeterEnabled = false;
++    double mXz1cMeterSumSquares = 0;
++    double mXz1cMeterPeak = 0;
++    uint64_t mXz1cMeterSamples = 0;
++
++
+     // TODO:
+     // Rearrange the buffer info into a struct/class with
+     // clear, copy, construction, destruction methods.
+@@ -1798,6 +1811,7 @@ protected:
+ 
+     audioflinger::MonotonicFrameCounter mMonotonicFrameCounter;  // for VolumeShaper
+     bool mVolumeShaperActive = false;
++    std::string mXz1cTrackStatus;
+ 
+     DirectOutputThread(const sp<IAfThreadCallback>& afThreadCallback, AudioStreamOut* output,
+                        audio_io_handle_t id, ThreadBase::type_t type, bool systemReady,
+diff --git a/services/audiopolicy/AudioPolicyInterface.h b/services/audiopolicy/AudioPolicyInterface.h
+index e5bd1213b0..7162819d6f 100644
+--- a/services/audiopolicy/AudioPolicyInterface.h
++++ b/services/audiopolicy/AudioPolicyInterface.h
+@@ -467,6 +467,9 @@ public:
+     virtual status_t getMmapPolicyForDevice(
+             media::audio::common::AudioMMapPolicyType policyType,
+             media::audio::common::AudioMMapPolicyInfo *policyInfo) = 0;
++    // XZ1C: called with the policy service lock held.
++    virtual void checkHiresDirectChange() {}
++
+ };
+ 
+ // Audio Policy client Interface
+diff --git a/services/audiopolicy/managerdefault/AudioPolicyManager.cpp b/services/audiopolicy/managerdefault/AudioPolicyManager.cpp
+index f133dfa2ca..4428bc45f4 100644
+--- a/services/audiopolicy/managerdefault/AudioPolicyManager.cpp
++++ b/services/audiopolicy/managerdefault/AudioPolicyManager.cpp
+@@ -60,6 +60,21 @@
+ 
+ namespace android {
+ 
++// Native media playback may bypass the mixer on analog headphones or USB audio.
++static bool xz1cIsUsbAudio(const DeviceVector& devices) {
++    return devices.size() == 1
++            && (devices.onlyContainsDevicesWithType(AUDIO_DEVICE_OUT_USB_DEVICE)
++                || devices.onlyContainsDevicesWithType(AUDIO_DEVICE_OUT_USB_HEADSET));
++}
++
++static bool xz1cIsDirectDevice(const DeviceVector& devices) {
++    return devices.size() == 1
++            && (devices.onlyContainsDevicesWithType(AUDIO_DEVICE_OUT_WIRED_HEADSET)
++                || devices.onlyContainsDevicesWithType(AUDIO_DEVICE_OUT_WIRED_HEADPHONE)
++                || xz1cIsUsbAudio(devices));
++}
++
++
+ 
+ namespace audio_flags = android::media::audiopolicy;
+ 
+@@ -1792,6 +1807,37 @@ audio_io_handle_t AudioPolicyManager::getOutputForDevices(
+         *flags = (audio_output_flags_t)(*flags | AUDIO_OUTPUT_FLAG_ULTRASOUND);
+     }
+ 
++    // xz1c: Promote ordinary analog-headphone and USB media PCM to native direct output.
++    const audio_output_flags_t xz1cOriginalFlags = *flags;
++    const bool xz1cAutoDirect = property_get_bool("persist.sys.xz1c.hires_direct", true)
++            && ((attr->usage == AUDIO_USAGE_MEDIA
++                    && (attr->content_type == AUDIO_CONTENT_TYPE_MUSIC
++                        || attr->content_type == AUDIO_CONTENT_TYPE_UNKNOWN
++                        || attr->content_type == AUDIO_CONTENT_TYPE_MOVIE))
++                || (attr->usage == AUDIO_USAGE_UNKNOWN
++                    && attr->content_type == AUDIO_CONTENT_TYPE_MUSIC))
++            && xz1cIsDirectDevice(devices)
++            && (*flags == AUDIO_OUTPUT_FLAG_NONE || *flags == AUDIO_OUTPUT_FLAG_DEEP_BUFFER)
++            && prefMixerConfigInfo == nullptr
++            && audio_is_linear_pcm(config->format)
++            && (config->format == AUDIO_FORMAT_PCM_16_BIT
++                    || config->format == AUDIO_FORMAT_PCM_8_24_BIT
++                    || config->format == AUDIO_FORMAT_PCM_24_BIT_PACKED
++                    || config->format == AUDIO_FORMAT_PCM_32_BIT
++                    || config->format == AUDIO_FORMAT_PCM_FLOAT)
++            && config->sample_rate != 0
++            && (xz1cIsUsbAudio(devices)
++                    || config->sample_rate == 44100 || config->sample_rate == 48000
++                    || config->sample_rate == 88200
++                    || config->sample_rate == 96000 || config->sample_rate == 176400
++                    || config->sample_rate == 192000
++                    || audio_bytes_per_sample(config->format) > 2);
++    if (xz1cAutoDirect) {
++        // xz1c: A direct profile cannot coexist with DEEP_BUFFER; restore it on failure.
++        *flags = (audio_output_flags_t)((*flags & ~AUDIO_OUTPUT_FLAG_DEEP_BUFFER)
++                | AUDIO_OUTPUT_FLAG_DIRECT);
++    }
++
+     // Use the spatializer output if the content can be spatialized, no preferred mixer
+     // was specified and offload or direct playback is not explicitly requested, and there is no
+     // haptic channel included in playback
+@@ -1807,9 +1853,38 @@ audio_io_handle_t AudioPolicyManager::getOutputForDevices(
+ 
+     audio_config_t directConfig = *config;
+     directConfig.channel_mask = channelMask;
++    if (xz1cAutoDirect) {
++        // Keep the AudioTrack client format; the direct thread converts float to int32.
++        if (directConfig.format == AUDIO_FORMAT_PCM_FLOAT
++                && !(xz1cIsUsbAudio(devices)
++                    && getProfileForOutput(devices, directConfig.sample_rate,
++                            directConfig.format, directConfig.channel_mask,
++                            *flags, true /* directOnly */) != nullptr)) {
++            directConfig.format = AUDIO_FORMAT_PCM_32_BIT;
++        }
++        // Sony's PCM direct HAL requires PCM offload metadata even for an AudioTrack.
++        directConfig.offload_info = AUDIO_INFO_INITIALIZER;
++        directConfig.offload_info.duration_us = -1;
++        directConfig.offload_info.sample_rate = directConfig.sample_rate;
++        directConfig.offload_info.channel_mask = directConfig.channel_mask;
++        directConfig.offload_info.format = directConfig.format;
++        directConfig.offload_info.stream_type = stream;
++        directConfig.offload_info.bit_width = audio_bytes_per_sample(directConfig.format) * 8;
++        directConfig.offload_info.usage = attr->usage;
++    }
+ 
+     status_t status = openDirectOutput(stream, session, &directConfig, *flags, devices, &output,
+                                        *attr);
++    if (xz1cAutoDirect && status == NO_ERROR && output != AUDIO_IO_HANDLE_NONE) {
++        mXz1cAutoDirectSessions.insert(session);
++        ALOGI("xz1c: AudioTrack direct session %d rate %u source %#x sink %#x",
++                session, config->sample_rate, config->format, directConfig.format);
++    }
++    if (xz1cAutoDirect && status != NO_ERROR) {
++        // xz1c: Restore the caller flags and run the ordinary mixer selection on any direct error.
++        *flags = xz1cOriginalFlags;
++        status = NAME_NOT_FOUND;
++    }
+     if (status != NAME_NOT_FOUND) {
+         return output;
+     }
+@@ -2914,6 +2989,13 @@ bool AudioPolicyManager::releaseOutput(audio_port_handle_t portId)
+     }
+ 
+     outputDesc->removeClient(portId);
++    bool sessionPresent = false;
++    for (size_t i = 0; i < mOutputs.size(); ++i) {
++        for (const auto& other : mOutputs[i]->getClientIterable()) {
++            if (other->session() == client->session()) sessionPresent = true;
++        }
++    }
++    if (!sessionPresent) mXz1cAutoDirectSessions.erase(client->session());
+     if (outputDesc->mPendingReopenToQueryProfiles && outputDesc->getClientCount() == 0) {
+         // The output is pending reopened to query dynamic profiles and
+         // there is no active clients
+@@ -7549,7 +7631,14 @@ void AudioPolicyManager::checkOutputForAttributes(const audio_attributes_t &attr
+             if (mEngine->getProductStrategyForAttributes(client->attributes()) != psId) {
+                 continue;
+             }
+-            if (!desc->supportsAllDevices(newDevices)) {
++            // xz1c: Enter the invalidation pass even when direct_pcm also supports Speaker.
++            const bool xz1cDirectDeviceMoved = desc->mProfile->isDirectOutput()
++                    && (client->flags() & AUDIO_OUTPUT_FLAG_DIRECT) != 0
++                    && client->attributes().usage == AUDIO_USAGE_MEDIA
++                    && audio_is_linear_pcm(client->config().format)
++                    && xz1cIsDirectDevice(oldDevices)
++                    && oldDevices != newDevices;
++            if (xz1cDirectDeviceMoved || !desc->supportsAllDevices(newDevices)) {
+                 invalidatedOutputs.push_back(desc);
+                 break;
+             }
+@@ -7603,7 +7692,15 @@ void AudioPolicyManager::checkOutputForAttributes(const audio_attributes_t &attr
+                                    client->config().channel_mask,
+                                    client->flags(),
+                                    true /* directOnly */);
+-                    if (profile != desc->mProfile) {
++                    // xz1c: Recreate wired media PCM tracks as mixer tracks after unplugging.
++                    const bool xz1cDirectDeviceMoved =
++                            (client->flags() & AUDIO_OUTPUT_FLAG_DIRECT) != 0
++                            && client->attributes().usage == AUDIO_USAGE_MEDIA
++                            && audio_is_linear_pcm(client->config().format)
++                            && (!xz1cIsDirectDevice(newDevices)
++                                || (xz1cIsDirectDevice(oldDevices)
++                                    && oldDevices != newDevices));
++                    if (profile != desc->mProfile || xz1cDirectDeviceMoved) {
+                         invalidate = true;
+                         break;
+                     }
+@@ -7652,6 +7749,53 @@ void AudioPolicyManager::checkOutputForAllStrategies()
+     }
+ }
+ 
++void AudioPolicyManager::checkHiresDirectChange() {
++    const bool enabled = property_get_bool("persist.sys.xz1c.hires_direct", true);
++    if (enabled == mXz1cHiresDirect) return;
++    mXz1cHiresDirect = enabled;
++    PortHandleVector ports;
++    for (size_t i = 0; i < mOutputs.size(); ++i) {
++        const auto& desc = mOutputs[i];
++        const auto devices = desc->devices();
++        if (!xz1cIsDirectDevice(devices)) {
++            continue;
++        }
++        for (const auto& client : desc->clientsList(true /* activeOnly */)) {
++            const auto attr = client->attributes();
++            const auto config = client->config();
++            const bool media = (attr.usage == AUDIO_USAGE_MEDIA
++                    && (attr.content_type == AUDIO_CONTENT_TYPE_MUSIC
++                        || attr.content_type == AUDIO_CONTENT_TYPE_UNKNOWN
++                        || attr.content_type == AUDIO_CONTENT_TYPE_MOVIE))
++                    || (attr.usage == AUDIO_USAGE_UNKNOWN
++                        && attr.content_type == AUDIO_CONTENT_TYPE_MUSIC);
++            if (!media || !audio_is_linear_pcm(config.format)) continue;
++            if (enabled) {
++                const auto flags = client->flags();
++                if (((desc->mFlags & AUDIO_OUTPUT_FLAG_DIRECT) != 0) ||
++                        (flags != AUDIO_OUTPUT_FLAG_NONE && flags != AUDIO_OUTPUT_FLAG_DEEP_BUFFER)) {
++                    continue;
++                }
++                if (!(xz1cIsUsbAudio(devices)
++                      || config.sample_rate == 44100 || config.sample_rate == 48000
++                      || config.sample_rate == 88200
++                      || config.sample_rate == 96000 || config.sample_rate == 176400
++                      || config.sample_rate == 192000 || audio_bytes_per_sample(config.format) > 2)) {
++                    continue;
++                }
++            } else if (!((desc->mFlags & AUDIO_OUTPUT_FLAG_DIRECT) != 0) ||
++                    mXz1cAutoDirectSessions.count(client->session()) == 0) {
++                continue; // Do not tear down explicit direct or DSEE clients.
++            }
++            ports.push_back(client->portId());
++        }
++    }
++    if (!ports.empty()) {
++        ALOGI("xz1c: live AudioTrack direct=%d invalidate %zu tracks", enabled, ports.size());
++        mpClientInterface->invalidateTracks(ports);
++    }
++}
++
+ void AudioPolicyManager::checkSecondaryOutputs() {
+     PortHandleVector clientsToInvalidate;
+     TrackSecondaryOutputsMap trackSecondaryOutputs;
+diff --git a/services/audiopolicy/managerdefault/AudioPolicyManager.h b/services/audiopolicy/managerdefault/AudioPolicyManager.h
+index 44863eedc2..9d009ab063 100644
+--- a/services/audiopolicy/managerdefault/AudioPolicyManager.h
++++ b/services/audiopolicy/managerdefault/AudioPolicyManager.h
+@@ -33,6 +33,7 @@
+ #include <media/AudioPolicy.h>
+ #include <media/AudioProfile.h>
+ #include <media/PatchBuilder.h>
++#include <set>
+ #include "AudioPolicyInterface.h"
+ 
+ #include <android/media/DeviceConnectedState.h>
+@@ -264,6 +265,7 @@ public:
+         void dump(String8 *dst) const;
+ 
+         status_t dump(int fd) override;
++        void checkHiresDirectChange() override;
+ 
+         status_t setAllowedCapturePolicy(uid_t uid, audio_flags_mask_t capturePolicy) override;
+         virtual audio_offload_mode_t getOffloadSupport(const audio_offload_info_t& offloadInfo);
+@@ -995,6 +997,8 @@ protected:
+         sp<SwAudioOutputDescriptor> mSpatializerOutput;
+ 
+         SwAudioOutputCollection mOutputs;
++        bool mXz1cHiresDirect = false;
++        std::set<audio_session_t> mXz1cAutoDirectSessions;
+         // copy of mOutputs before setDeviceConnectionState() opens new outputs
+         // reset to mOutputs when updateDevicesAndOutputs() is called.
+         SwAudioOutputCollection mPreviousOutputs;
+diff --git a/services/audiopolicy/service/AudioPolicyService.cpp b/services/audiopolicy/service/AudioPolicyService.cpp
+index 4c506e867c..c23f7ec64c 100644
+--- a/services/audiopolicy/service/AudioPolicyService.cpp
++++ b/services/audiopolicy/service/AudioPolicyService.cpp
+@@ -2102,6 +2102,23 @@ bool AudioPolicyService::AudioCommandThread::threadLoop()
+             release_wake_lock(mName.c_str());
+         }
+ 
++        // XZ1C: use the existing output command thread, without its queue mutex,
++        // to invalidate music tracks when the direct property changes.
++        if (mName == String8("ApmOutput") && !exitPending()) {
++            ul.unlock();
++            {
++                sp<AudioPolicyService> service = mService.promote();
++                if (service != nullptr) {
++                    audio_utils::lock_guard serviceLock(service->mMutex);
++                    if (service->mAudioPolicyManager != nullptr) {
++                        service->mAudioPolicyManager->checkHiresDirectChange();
++                    }
++                }
++            }
++            ul.lock();
++            if (waitTime < 0 || waitTime > 500000000LL) waitTime = 500000000LL;
++        }
++
+         // At this stage we have either an empty command queue or the first command in the queue
+         // has a finite delay. So unless we are exiting it is safe to wait.
+         if (!exitPending()) {

@@ -1,0 +1,61 @@
+diff --git a/src/nfa/dm/nfa_dm_discover.cc b/src/nfa/dm/nfa_dm_discover.cc
+index 309b52fe..a6942d6b 100644
+--- a/src/nfa/dm/nfa_dm_discover.cc
++++ b/src/nfa/dm/nfa_dm_discover.cc
+@@ -200,6 +200,20 @@ static uint8_t nfa_dm_get_rf_discover_config(
+         nfa_dm_change_listen_mask(dm_disc_mask, dm_disc_listen_mask_dfl);
+   }
+ 
++  // XZ1C: while the built-in access card is emulated (XZ1C_LA_SEL_INFO override),
++  // listen on NFC-A only. With HCE apps (Alipay, Wallet) installed the stack also
++  // listened on NFC-B/F; door readers that poll A and B then often activated the
++  // phone as an anonymous Type B ISO-DEP card (random PUPI) instead of reading the
++  // Type A UID, so the reader beeped but the door stayed shut (2026-10-09 snoop:
++  // RF_INTF_ACTIVATED mode 0x81 every ~100 ms).
++  if (NfcConfig::hasKey(NAME_XZ1C_LA_SEL_INFO) &&
++      (dm_disc_mask & NFA_DM_DISC_MASK_LISTEN)) {
++    dm_disc_mask &= ~(NFA_DM_DISC_MASK_LB_ISO_DEP | NFA_DM_DISC_MASK_LF_T3T |
++                      NFA_DM_DISC_MASK_L_B_PRIME | NFA_DM_DISC_MASK_L_ISO15693);
++    LOG(INFO) << StringPrintf("XZ1C: access card, listen NFC-A only (mask 0x%x)",
++                              dm_disc_mask);
++  }
++
+   // RF_FIELD_INFO_NTF needed only if some listen programmed
+   nfa_dm_set_rf_field_info_ntf((dm_disc_mask & NFA_DM_DISC_MASK_LISTEN) ? 0x01
+                                                                         : 0x00);
+diff --git a/src/nfc/nfc/nfc_main.cc b/src/nfc/nfc/nfc_main.cc
+index c7eaebe6..37cca9de 100644
+--- a/src/nfc/nfc/nfc_main.cc
++++ b/src/nfc/nfc/nfc_main.cc
+@@ -34,6 +34,7 @@
+ #include "nci_hmsgs.h"
+ #include "nfa_sys.h"
+ #include "nfc_api.h"
++#include "nfc_config.h"
+ #include "nfc_int.h"
+ #include "nfc_target.h"
+ #include "rw_int.h"
+@@ -778,6 +779,23 @@ void NFC_Init(tHAL_NFC_ENTRY* p_hal_entry_tbl) {
+   nfc_cb.nci_wait_rsp_tout = NFC_CMD_CMPL_TIMEOUT;
+   nfc_cb.p_disc_maps = nfc_interface_mapping;
+   nfc_cb.num_disc_maps = NFC_NUM_INTERFACE_MAP;
++
++  // XZ1C: while the built-in access card is emulated (NativeNfcManager sets the
++  // XZ1C_LA_SEL_INFO override to SAK 0x08), behave like a real MIFARE Classic:
++  // map ISO-DEP for poll only, so the NFCC no longer answers a reader's RATS in
++  // listen mode. Door readers activated the phone as ISO-DEP and then dropped it
++  // (RF link loss) instead of accepting the UID. Reading tags is unaffected.
++  static tNCI_DISCOVER_MAPS xz1c_maps[NFC_NUM_INTERFACE_MAP];
++  if (NfcConfig::hasKey(NAME_XZ1C_LA_SEL_INFO)) {
++    memcpy(xz1c_maps, nfc_interface_mapping, sizeof(xz1c_maps));
++    for (int i = 0; i < NFC_NUM_INTERFACE_MAP; i++) {
++      if (xz1c_maps[i].protocol == NCI_PROTOCOL_ISO_DEP) {
++        xz1c_maps[i].mode = 0x01; /* NCI interface mode: poll only */
++      }
++    }
++    nfc_cb.p_disc_maps = xz1c_maps;
++    LOG(INFO) << "XZ1C: access card emulation, ISO-DEP mapped for poll only";
++  }
+   nfc_cb.nci_ctrl_size = NCI_CTRL_INIT_SIZE;
+   nfc_cb.reassembly = true;
+   nfc_cb.nci_version = NCI_VERSION_UNKNOWN;

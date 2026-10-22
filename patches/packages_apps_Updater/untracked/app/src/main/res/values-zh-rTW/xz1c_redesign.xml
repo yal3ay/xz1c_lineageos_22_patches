@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="xz1c_updates_title">系統更新</string>
+    <string name="xz1c_check_updates">檢查更新</string>
+    <string name="xz1c_device_name">Xperia XZ1 Compact</string>
+    <string name="xz1c_addon_contents_title">附加包內容</string>
+    <string name="xz1c_addon_sony_detail">Sony 原廠應用，獨立於基礎系統安裝。</string>
+    <string name="xz1c_addon_google_detail">Google 商店與服務，獨立於基礎系統安裝。</string>
+    <string name="xz1c_addon_included">包含的應用</string>
+    <string name="xz1c_addon_policy_short">更新 ROM 時，保留已安裝的附加包。</string>
+    <string name="xz1c_addon_remove_footnote">只移除這組附加應用，不清除整部手機。</string>
+    <plurals name="xz1c_addon_app_count">
+        <item quantity="other">%d 個</item>
+    </plurals>
+</resources>

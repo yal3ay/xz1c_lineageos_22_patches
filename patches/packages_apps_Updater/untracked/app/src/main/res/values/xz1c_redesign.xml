@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="xz1c_updates_title">System update</string>
+    <string name="xz1c_check_updates">Check for updates</string>
+    <string name="xz1c_device_name">Xperia XZ1 Compact</string>
+    <string name="xz1c_addon_contents_title">Add-on contents</string>
+    <string name="xz1c_addon_sony_detail">Sony factory apps, installed separately from the base system.</string>
+    <string name="xz1c_addon_google_detail">Google Store and services, installed separately from the base system.</string>
+    <string name="xz1c_addon_included">Included apps</string>
+    <string name="xz1c_addon_policy_short">Installed add-ons stay when the ROM updates.</string>
+    <string name="xz1c_addon_remove_footnote">Removes only this group of add-on apps; the phone is not reset.</string>
+    <plurals name="xz1c_addon_app_count">
+        <item quantity="one">%d app</item>
+        <item quantity="other">%d apps</item>
+    </plurals>
+</resources>

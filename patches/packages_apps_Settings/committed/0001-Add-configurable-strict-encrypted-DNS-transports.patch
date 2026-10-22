@@ -1,0 +1,363 @@
+From 96ad4c5aaf2cbadfaaad329e12f1856d0d2d27b6 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Sun, 4 Oct 2026 15:40:53 +0800
+Subject: [PATCH 1/3] Add configurable strict encrypted DNS transports
+
+Change-Id: Ia92b11136af9f6571f5b51662b0924ab66039d44
+---
+ res/layout/private_dns_mode_dialog.xml        |  20 +++
+ res/values-zh-rCN/xz1c_dns_strings.xml        |   8 +
+ res/values-zh-rTW/xz1c_dns_strings.xml        |   8 +
+ res/values/xz1c_dns_strings.xml               |   8 +
+ .../PrivateDnsModeDialogPreference.java       | 158 +++++++++++++++++-
+ .../PrivateDnsPreferenceController.java       |   8 +-
+ 6 files changed, 201 insertions(+), 9 deletions(-)
+ create mode 100644 res/values-zh-rCN/xz1c_dns_strings.xml
+ create mode 100644 res/values-zh-rTW/xz1c_dns_strings.xml
+ create mode 100644 res/values/xz1c_dns_strings.xml
+
+diff --git a/res/layout/private_dns_mode_dialog.xml b/res/layout/private_dns_mode_dialog.xml
+index e7e14992211..180cb870e50 100644
+--- a/res/layout/private_dns_mode_dialog.xml
++++ b/res/layout/private_dns_mode_dialog.xml
+@@ -43,6 +43,22 @@
+                 android:id="@+id/private_dns_mode_opportunistic"
+                 layout="@layout/preference_widget_dialog_radiobutton"/>
+ 
++            <include
++                android:id="@+id/private_dns_alidns_dot"
++                layout="@layout/preference_widget_dialog_radiobutton"/>
++
++            <include
++                android:id="@+id/private_dns_alidns_doh"
++                layout="@layout/preference_widget_dialog_radiobutton"/>
++
++            <include
++                android:id="@+id/private_dns_alidns_doh3"
++                layout="@layout/preference_widget_dialog_radiobutton"/>
++
++            <include
++                android:id="@+id/private_dns_alidns_doq"
++                layout="@layout/preference_widget_dialog_radiobutton"/>
++
+             <include
+                 android:id="@+id/private_dns_mode_provider"
+                 layout="@layout/preference_widget_dialog_radiobutton"/>
+@@ -60,6 +76,10 @@
+                 android:minHeight="@dimen/developer_option_dialog_min_height"/>
+         </RadioGroup>
+ 
++        <include
++            android:id="@+id/private_dns_alidns_info"
++            layout="@layout/preference_widget_dialog_summary"/>
++
+         <include
+             android:id="@+id/private_dns_help_info"
+             layout="@layout/preference_widget_dialog_summary"/>
+diff --git a/res/values-zh-rCN/xz1c_dns_strings.xml b/res/values-zh-rCN/xz1c_dns_strings.xml
+new file mode 100644
+index 00000000000..840b955e312
+--- /dev/null
++++ b/res/values-zh-rCN/xz1c_dns_strings.xml
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="private_dns_alidns_dot">自定义 · DoT</string>
++    <string name="private_dns_alidns_doh">自定义 · DoH (HTTP/2)</string>
++    <string name="private_dns_alidns_doh3">自定义 · DoH3 (HTTP/3)</string>
++    <string name="private_dns_alidns_doq">自定义 · DoQ</string>
++    <string name="private_dns_alidns_info">可修改下方服务器。DoH、DoH3 填 HTTPS 网址；DoT、DoQ 填主机名，可附端口。连接失败时不回退到明文；解析服务器仍可看到查询内容。</string>
++</resources>
+diff --git a/res/values-zh-rTW/xz1c_dns_strings.xml b/res/values-zh-rTW/xz1c_dns_strings.xml
+new file mode 100644
+index 00000000000..5dab8bafaa6
+--- /dev/null
++++ b/res/values-zh-rTW/xz1c_dns_strings.xml
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="private_dns_alidns_dot">自訂 · DoT</string>
++    <string name="private_dns_alidns_doh">自訂 · DoH (HTTP/2)</string>
++    <string name="private_dns_alidns_doh3">自訂 · DoH3 (HTTP/3)</string>
++    <string name="private_dns_alidns_doq">自訂 · DoQ</string>
++    <string name="private_dns_alidns_info">可修改下方伺服器。DoH、DoH3 填 HTTPS 網址；DoT、DoQ 填主機名稱，可附連接埠。連線失敗時不退回明文；解析伺服器仍可看到查詢內容。</string>
++</resources>
+diff --git a/res/values/xz1c_dns_strings.xml b/res/values/xz1c_dns_strings.xml
+new file mode 100644
+index 00000000000..eb2da9bf9a3
+--- /dev/null
++++ b/res/values/xz1c_dns_strings.xml
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="private_dns_alidns_dot">Custom · DoT</string>
++    <string name="private_dns_alidns_doh">Custom · DoH (HTTP/2)</string>
++    <string name="private_dns_alidns_doh3">Custom · DoH3 (HTTP/3)</string>
++    <string name="private_dns_alidns_doq">Custom · DoQ</string>
++    <string name="private_dns_alidns_info">Edit the server below. For DoH and DoH3, enter an HTTPS URL; for DoT and DoQ, enter a hostname and optional port. Queries remain encrypted; the server can still see their contents.</string>
++</resources>
+diff --git a/src/com/android/settings/network/PrivateDnsModeDialogPreference.java b/src/com/android/settings/network/PrivateDnsModeDialogPreference.java
+index a5317ff4909..28ad60cbf23 100644
+--- a/src/com/android/settings/network/PrivateDnsModeDialogPreference.java
++++ b/src/com/android/settings/network/PrivateDnsModeDialogPreference.java
+@@ -28,6 +28,8 @@ import android.content.Context;
+ import android.content.DialogInterface;
+ import android.content.Intent;
+ import android.net.ConnectivitySettingsManager;
++import android.net.Uri;
++import android.net.InetAddresses;
+ import android.os.UserHandle;
+ import android.os.UserManager;
+ import android.provider.Settings;
+@@ -75,8 +77,74 @@ public class PrivateDnsModeDialogPreference extends CustomDialogPreferenceCompat
+     // Only used in Settings, update on additions to ConnectivitySettingsUtils
+     private static final int PRIVATE_DNS_MODE_CLOUDFLARE = 4;
+ 
++    static final String ALIDNS_PROTOCOL_KEY = "xz1c_dns_protocol";
++    static final String ENDPOINT_KEY = "xz1c_dns_endpoint";
++    static final String ALIDNS_HOST = "dns.alidns.com";
++    private final Map<Integer, String> mEndpoints = new HashMap<>();
++    private static final int ALIDNS_DOT = 5;
++    private static final int ALIDNS_DOH = 6;
++    private static final int ALIDNS_DOH3 = 7;
++    private static final int ALIDNS_DOQ = 8;
++
++    static String aliProtocol(int mode) {
++        switch (mode) {
++            case ALIDNS_DOH: return "doh";
++            case ALIDNS_DOH3: return "doh3";
++            case ALIDNS_DOQ: return "doq";
++            default: return "dot";
++        }
++    }
++
++    static int aliLabel(String protocol) {
++        if ("doh".equals(protocol)) return R.string.private_dns_alidns_doh;
++        if ("doh3".equals(protocol)) return R.string.private_dns_alidns_doh3;
++        if ("doq".equals(protocol)) return R.string.private_dns_alidns_doq;
++        return R.string.private_dns_alidns_dot;
++    }
++
++    static Uri parseEndpoint(String input, String protocol) {
++        try {
++            input = input.trim();
++            final String scheme = "dot".equals(protocol) ? "tls"
++                    : "doq".equals(protocol) ? "quic" : "https";
++            if (!input.contains("://")) input = scheme + "://" + input;
++            // Android Uri tolerates malformed ports; validate syntax before saving.
++            final java.net.URI strictUri = java.net.URI.create(input);
++            if (strictUri.getHost() == null || strictUri.getRawAuthority().endsWith(":"))
++                return null;
++            Uri uri = Uri.parse(input);
++            final String host = uri.getHost();
++            if (!scheme.equals(uri.getScheme()) || host == null || host.isEmpty()
++                    || uri.getUserInfo() != null || uri.getFragment() != null
++                    || (!InternetDomainName.isValid(host) && !InetAddresses.isNumericAddress(host))
++                    || uri.getPort() == 0 || uri.getPort() > 65535) return null;
++            if ("https".equals(scheme)) {
++                if (uri.getPath() == null || uri.getPath().isEmpty())
++                    uri = uri.buildUpon().path("/dns-query").build();
++            } else if ((uri.getPath() != null && !uri.getPath().isEmpty()
++                    && !"/".equals(uri.getPath())) || uri.getQuery() != null) return null;
++            return uri;
++        } catch (IllegalArgumentException e) {
++            return null;
++        }
++    }
++
++    static boolean hasSelectedEndpoint(ContentResolver cr, String hostname) {
++        final String protocol = Settings.Global.getString(cr, ALIDNS_PROTOCOL_KEY);
++        if (!"dot".equals(protocol) && !"doh".equals(protocol)
++                && !"doh3".equals(protocol) && !"doq".equals(protocol)) return false;
++        final String endpoint = Settings.Global.getString(cr, ENDPOINT_KEY);
++        if (endpoint == null) return false;
++        final Uri uri = parseEndpoint(endpoint, protocol);
++        return uri != null && uri.getHost().equalsIgnoreCase(hostname);
++    }
++
+     static {
+         PRIVATE_DNS_MAP = new HashMap<>();
++        PRIVATE_DNS_MAP.put(ALIDNS_DOT, R.id.private_dns_alidns_dot);
++        PRIVATE_DNS_MAP.put(ALIDNS_DOH, R.id.private_dns_alidns_doh);
++        PRIVATE_DNS_MAP.put(ALIDNS_DOH3, R.id.private_dns_alidns_doh3);
++        PRIVATE_DNS_MAP.put(ALIDNS_DOQ, R.id.private_dns_alidns_doq);
+         PRIVATE_DNS_MAP.put(PRIVATE_DNS_MODE_OFF, R.id.private_dns_mode_off);
+         PRIVATE_DNS_MAP.put(PRIVATE_DNS_MODE_CLOUDFLARE, R.id.private_dns_mode_cloudflare);
+         PRIVATE_DNS_MAP.put(PRIVATE_DNS_MODE_OPPORTUNISTIC, R.id.private_dns_mode_opportunistic);
+@@ -153,19 +221,41 @@ public class PrivateDnsModeDialogPreference extends CustomDialogPreferenceCompat
+                     ConnectivitySettingsManager.getPrivateDnsHostname(context);
+             final String cloudflareHostname =
+                     context.getString(R.string.private_dns_hostname_cloudflare);
+-            if (privateDnsHostname.equals(cloudflareHostname)) {
++            if (hasSelectedEndpoint(contentResolver, privateDnsHostname)) {
++                final String protocol = Settings.Global.getString(contentResolver,
++                        ALIDNS_PROTOCOL_KEY);
++                mMode = "doh".equals(protocol) ? ALIDNS_DOH
++                        : "doh3".equals(protocol) ? ALIDNS_DOH3
++                        : "doq".equals(protocol) ? ALIDNS_DOQ : ALIDNS_DOT;
++            } else if (cloudflareHostname.equals(privateDnsHostname)) {
+                 mMode = PRIVATE_DNS_MODE_CLOUDFLARE;
+             }
+         }
+ 
+         mEditText = view.findViewById(R.id.private_dns_mode_provider_hostname);
+         mEditText.addTextChangedListener(this);
+-        mEditText.setText(getHostnameFromSettings(contentResolver));
++        final String storedEndpoint = Settings.Global.getString(contentResolver, ENDPOINT_KEY);
++        final String storedHostname = getHostnameFromSettings(contentResolver);
++        mEditText.setText(mMode >= ALIDNS_DOT && storedEndpoint != null ? storedEndpoint
++                : mMode == PRIVATE_DNS_MODE_PROVIDER_HOSTNAME && storedHostname != null
++                ? storedHostname : storedEndpoint != null && !storedEndpoint.isEmpty()
++                ? storedEndpoint : ALIDNS_HOST);
+ 
+         mRadioGroup = view.findViewById(R.id.private_dns_radio_group);
+         mRadioGroup.setOnCheckedChangeListener(this);
+         mRadioGroup.check(PRIVATE_DNS_MAP.getOrDefault(mMode, R.id.private_dns_mode_opportunistic));
+ 
++        ((RadioButton) view.findViewById(R.id.private_dns_alidns_dot))
++                .setText(R.string.private_dns_alidns_dot);
++        ((RadioButton) view.findViewById(R.id.private_dns_alidns_doh))
++                .setText(R.string.private_dns_alidns_doh);
++        ((RadioButton) view.findViewById(R.id.private_dns_alidns_doh3))
++                .setText(R.string.private_dns_alidns_doh3);
++        ((RadioButton) view.findViewById(R.id.private_dns_alidns_doq))
++                .setText(R.string.private_dns_alidns_doq);
++        ((TextView) view.findViewById(R.id.private_dns_alidns_info))
++                .setText(R.string.private_dns_alidns_info);
++
+         // Initial radio button text
+         final RadioButton offRadioButton = view.findViewById(R.id.private_dns_mode_off);
+         offRadioButton.setText(com.android.settingslib.R.string.private_dns_mode_off);
+@@ -199,7 +289,17 @@ public class PrivateDnsModeDialogPreference extends CustomDialogPreferenceCompat
+         if (which == DialogInterface.BUTTON_POSITIVE) {
+             final Context context = getContext();
+             int modeToSet = mMode;
+-            if (mMode == PRIVATE_DNS_MODE_PROVIDER_HOSTNAME) {
++            if (mMode >= ALIDNS_DOT && mMode <= ALIDNS_DOQ) {
++                final String protocol = aliProtocol(mMode);
++                final Uri endpoint = parseEndpoint(mEditText.getText().toString(), protocol);
++                if (endpoint == null) return;
++                Settings.Global.putString(context.getContentResolver(), ENDPOINT_KEY,
++                        endpoint.toString());
++                ConnectivitySettingsManager.setPrivateDnsHostname(context, endpoint.getHost());
++                Settings.Global.putString(context.getContentResolver(), ALIDNS_PROTOCOL_KEY,
++                        aliProtocol(mMode));
++                modeToSet = PRIVATE_DNS_MODE_PROVIDER_HOSTNAME;
++            } else if (mMode == PRIVATE_DNS_MODE_PROVIDER_HOSTNAME) {
+                 // Only clickable if hostname is valid, so we could save it safely
+                 ConnectivitySettingsManager.setPrivateDnsHostname(context,
+                         mEditText.getText().toString());
+@@ -210,6 +310,9 @@ public class PrivateDnsModeDialogPreference extends CustomDialogPreferenceCompat
+                 modeToSet = PRIVATE_DNS_MODE_PROVIDER_HOSTNAME;
+             }
+ 
++            if (mMode < ALIDNS_DOT) {
++                Settings.Global.putString(context.getContentResolver(), ALIDNS_PROTOCOL_KEY, "");
++            }
+             FeatureFactory.getFeatureFactory().getMetricsFeatureProvider().action(context,
+                     SettingsEnums.ACTION_PRIVATE_DNS_MODE, modeToSet);
+             ConnectivitySettingsManager.setPrivateDnsMode(context, modeToSet);
+@@ -218,7 +321,19 @@ public class PrivateDnsModeDialogPreference extends CustomDialogPreferenceCompat
+ 
+     @Override
+     public void onCheckedChanged(RadioGroup group, int checkedId) {
+-        if (checkedId == R.id.private_dns_mode_off) {
++        final int previousMode = mMode;
++        if (mEditText != null && previousMode >= ALIDNS_DOT) {
++            mEndpoints.put(previousMode, mEditText.getText().toString());
++        }
++        if (checkedId == R.id.private_dns_alidns_dot) {
++            mMode = ALIDNS_DOT;
++        } else if (checkedId == R.id.private_dns_alidns_doh) {
++            mMode = ALIDNS_DOH;
++        } else if (checkedId == R.id.private_dns_alidns_doh3) {
++            mMode = ALIDNS_DOH3;
++        } else if (checkedId == R.id.private_dns_alidns_doq) {
++            mMode = ALIDNS_DOQ;
++        } else if (checkedId == R.id.private_dns_mode_off) {
+             mMode = PRIVATE_DNS_MODE_OFF;
+         } else if (checkedId == R.id.private_dns_mode_cloudflare) {
+             mMode = PRIVATE_DNS_MODE_CLOUDFLARE;
+@@ -227,6 +342,28 @@ public class PrivateDnsModeDialogPreference extends CustomDialogPreferenceCompat
+         } else if (checkedId == R.id.private_dns_mode_provider) {
+             mMode = PRIVATE_DNS_MODE_PROVIDER_HOSTNAME;
+         }
++        if (mEditText != null && mMode >= ALIDNS_DOT && previousMode != mMode) {
++            String text = mEndpoints.get(mMode);
++            if (text == null) {
++                text = mEditText.getText().toString();
++                final String oldProtocol = text.startsWith("tls://") ? "dot"
++                        : text.startsWith("quic://") ? "doq" : "doh";
++                final Uri old = parseEndpoint(text, oldProtocol);
++                if (old != null && text.contains("://")) {
++                    final String protocol = aliProtocol(mMode);
++                    final boolean https = "doh".equals(protocol) || "doh3".equals(protocol);
++                    final String scheme = https ? "https" : "dot".equals(protocol) ? "tls" : "quic";
++                    final boolean changedFamily = "https".equals(old.getScheme()) != https;
++                    text = old.buildUpon().scheme(scheme)
++                            .encodedAuthority(changedFamily && (old.getPort() == 443 || old.getPort() == 853)
++                                    ? old.getHost() : old.getEncodedAuthority())
++                            .path(https ? changedFamily ? "/dns-query" : old.getPath() : "")
++                            .encodedQuery(https && !changedFamily ? old.getEncodedQuery() : null)
++                            .build().toString();
++                }
++            }
++            mEditText.setText(text);
++        }
+         updateDialogInfo();
+     }
+ 
+@@ -274,15 +411,20 @@ public class PrivateDnsModeDialogPreference extends CustomDialogPreferenceCompat
+     }
+ 
+     private void updateDialogInfo() {
+-        final boolean modeProvider = PRIVATE_DNS_MODE_PROVIDER_HOSTNAME == mMode;
++        final boolean selectedProtocol = mMode >= ALIDNS_DOT && mMode <= ALIDNS_DOQ;
++        final boolean modeProvider = PRIVATE_DNS_MODE_PROVIDER_HOSTNAME == mMode || selectedProtocol;
++        if (mEditText != null && selectedProtocol) {
++            mEditText.setHint("doh".equals(aliProtocol(mMode)) || "doh3".equals(aliProtocol(mMode))
++                    ? "https://dns.alidns.com/dns-query" : "dns.alidns.com:853");
++        }
+         if (mEditText != null) {
+             mEditText.setEnabled(modeProvider);
+         }
+         final Button saveButton = getSaveButton();
+         if (saveButton != null) {
+-            saveButton.setEnabled(modeProvider
+-                    ? InternetDomainName.isValid(mEditText.getText().toString())
+-                    : true);
++            saveButton.setEnabled(selectedProtocol
++                    ? parseEndpoint(mEditText.getText().toString(), aliProtocol(mMode)) != null
++                    : modeProvider ? InternetDomainName.isValid(mEditText.getText().toString()) : true);
+         }
+     }
+ }
+diff --git a/src/com/android/settings/network/PrivateDnsPreferenceController.java b/src/com/android/settings/network/PrivateDnsPreferenceController.java
+index 17aaaeb869a..46c822dbbcc 100644
+--- a/src/com/android/settings/network/PrivateDnsPreferenceController.java
++++ b/src/com/android/settings/network/PrivateDnsPreferenceController.java
+@@ -63,6 +63,7 @@ public class PrivateDnsPreferenceController extends BasePreferenceController
+         Settings.Global.getUriFor(PRIVATE_DNS_MODE),
+         Settings.Global.getUriFor(PRIVATE_DNS_DEFAULT_MODE),
+         Settings.Global.getUriFor(PRIVATE_DNS_SPECIFIER),
++        Settings.Global.getUriFor(PrivateDnsModeDialogPreference.ALIDNS_PROTOCOL_KEY),
+     };
+ 
+     // Only used in Settings, update on additions to ConnectivitySettingsUtils
+@@ -146,7 +147,12 @@ public class PrivateDnsPreferenceController extends BasePreferenceController
+                         ConnectivitySettingsManager.getPrivateDnsHostname(mContext);
+                 final String cloudflareHostname =
+                         res.getString(R.string.private_dns_hostname_cloudflare);
+-                if (privateDnsHostname.equals(cloudflareHostname)) {
++                if (PrivateDnsModeDialogPreference.hasSelectedEndpoint(cr, privateDnsHostname)) {
++                    return privateDnsHostname + " · " + res.getString(PrivateDnsModeDialogPreference.aliLabel(
++                            Settings.Global.getString(cr,
++                                    PrivateDnsModeDialogPreference.ALIDNS_PROTOCOL_KEY)));
++                }
++                if (cloudflareHostname.equals(privateDnsHostname)) {
+                     return res.getString(R.string.private_dns_mode_cloudflare);
+                 }
+                 return PrivateDnsModeDialogPreference.getHostnameFromSettings(cr);
+-- 
+2.43.0
+

@@ -1,0 +1,48 @@
+From 5551a3787b233c8668098ef5fac46976e2d1e0ac Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Sun, 4 Oct 2026 15:40:53 +0800
+Subject: [PATCH 1/2] Add configurable strict encrypted DNS transports
+
+Change-Id: Ic3198460259dfa95b3e7089bad69189ff6fb10e8
+---
+ .../android/server/connectivity/DnsManager.java | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/service/src/com/android/server/connectivity/DnsManager.java b/service/src/com/android/server/connectivity/DnsManager.java
+index c940eecd46..f4668377ad 100644
+--- a/service/src/com/android/server/connectivity/DnsManager.java
++++ b/service/src/com/android/server/connectivity/DnsManager.java
+@@ -153,6 +153,8 @@ public class DnsManager {
+             Settings.Global.getUriFor(PRIVATE_DNS_DEFAULT_MODE),
+             Settings.Global.getUriFor(PRIVATE_DNS_MODE),
+             Settings.Global.getUriFor(PRIVATE_DNS_SPECIFIER),
++            Settings.Global.getUriFor("xz1c_dns_protocol"),
++            Settings.Global.getUriFor("xz1c_dns_endpoint"),
+         };
+     }
+ 
+@@ -502,6 +504,21 @@ public class DnsManager {
+     @Nullable
+     private DohParamsParcel makeDohParamsParcel(@NonNull PrivateDnsConfig cfg,
+             @NonNull LinkProperties lp) {
++        final String protocol = getStringSetting(mContentResolver, "xz1c_dns_protocol");
++        final String endpoint = getStringSetting(mContentResolver, "xz1c_dns_endpoint");
++        final boolean explicitProtocol = "dot".equals(protocol) || "doh".equals(protocol)
++                || "doh3".equals(protocol) || "doq".equals(protocol);
++        if (cfg.inStrictMode() && explicitProtocol && endpoint != null
++                && cfg.hostname.equalsIgnoreCase(Uri.parse(endpoint).getHost())) {
++            // Project-local transport hint consumed by our resolver, never sent on the wire.
++            // Keeps the frozen parcel interface compatible with existing callers.
++            return new DohParamsParcel.Builder()
++                    .setName(cfg.hostname)
++                    .setIps(makeStrings(getReachableAddressList(cfg.ips, lp)))
++                    .setDohpath("xz1c:" + protocol + ":" + endpoint)
++                    .setPort(Uri.parse(endpoint).getPort())
++                    .build();
++        }
+         if (!cfg.ddrEnabled) {
+             return null;
+         }
+-- 
+2.43.0
+

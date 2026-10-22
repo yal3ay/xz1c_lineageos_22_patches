@@ -1,0 +1,182 @@
+diff --git a/audio/common/all-versions/default/HidlUtils.cpp b/audio/common/all-versions/default/HidlUtils.cpp
+index c0dcd80ac0..9b3e855f38 100644
+--- a/audio/common/all-versions/default/HidlUtils.cpp
++++ b/audio/common/all-versions/default/HidlUtils.cpp
+@@ -18,6 +18,9 @@
+ 
+ #include <common/all-versions/VersionUtils.h>
+ #include <string.h>
++#include <stddef.h>
++#include <stdlib.h>
++#include <sys/system_properties.h>
+ 
+ using ::android::hardware::audio::common::utils::EnumBitfield;
+ 
+@@ -150,9 +153,34 @@ status_t HidlUtils::audioOffloadInfoFromHal(const audio_offload_info_t& halOfflo
+     return NO_ERROR;
+ }
+ 
++// xz1c: HALs built against the Android 8/9 headers (e.g. Sony's msm8998 audio.primary) only
++// accept offload info whose version/size equal their own initializer; anything newer fails
++// adev_open_output_stream with "Unsupported Offload information", which breaks compress offload
++// and direct PCM (and with it Sony DSEE HX). Opt in with ro.vendor.audio.legacy_offload_info=true.
++// Only the vendor copy (loaded by the HAL service in front of the old HAL) may do this: the
++// system copy also converts HAL replies back for AudioFlinger, and Android 15's AIDL layer
++// rejects a 0.1 offload info there (every openOutput fails, AudioPolicyManager stays null).
++static bool useLegacyOffloadInfo() {
++#ifndef __ANDROID_VENDOR__
++    return false;
++#else
++    static const bool legacy = [] {
++        char value[PROP_VALUE_MAX] = {};
++        __system_property_get("ro.vendor.audio.legacy_offload_info", value);
++        return strcmp(value, "true") == 0 || strcmp(value, "1") == 0;
++    }();
++    return legacy;
++#endif
++}
++
+ status_t HidlUtils::audioOffloadInfoToHal(const AudioOffloadInfo& offload,
+                                           audio_offload_info_t* halOffload) {
+     *halOffload = AUDIO_INFO_INITIALIZER;
++    if (useLegacyOffloadInfo()) {
++        // version 0.1 ended at .usage; the struct is 8-byte aligned (int64 duration_us)
++        halOffload->version = AUDIO_MAKE_OFFLOAD_INFO_VERSION(0, 1);
++        halOffload->size = (offsetof(audio_offload_info_t, encapsulation_mode) + 7) & ~7;
++    }
+     halOffload->sample_rate = offload.sampleRateHz;
+     halOffload->channel_mask = static_cast<audio_channel_mask_t>(offload.channelMask);
+     halOffload->format = static_cast<audio_format_t>(offload.format);
+diff --git a/audio/core/all-versions/default/Android.bp b/audio/core/all-versions/default/Android.bp
+index c55eef4546..e83a30698d 100644
+--- a/audio/core/all-versions/default/Android.bp
++++ b/audio/core/all-versions/default/Android.bp
+@@ -51,6 +51,7 @@ cc_defaults {
+         "libmedia_helper",
+         "libmediautils_vendor",
+         "libmemunreachable",
++        "libtinyalsa",
+         "libutils",
+         "android.hardware.audio.common-util",
+     ],
+diff --git a/audio/core/all-versions/default/StreamOut.cpp b/audio/core/all-versions/default/StreamOut.cpp
+index 09df4ed43d..3567edead1 100644
+--- a/audio/core/all-versions/default/StreamOut.cpp
++++ b/audio/core/all-versions/default/StreamOut.cpp
+@@ -33,6 +33,17 @@
+ #include <util/CoreUtils.h>
+ #include <utils/Trace.h>
+ 
++// xz1c: publish the headphone codec's real port rate / bit depth for the Hi-Fi Audio app
++#include <condition_variable>
++#include <mutex>
++#include <thread>
++#include <atomic>
++#include <time.h>
++#include <unistd.h>
++#include <cutils/properties.h>
++#include <utils/SystemClock.h>
++#include <tinyalsa/asoundlib.h>
++
+ namespace android {
+ namespace hardware {
+ namespace audio {
+@@ -47,6 +58,67 @@ using namespace ::android::hardware::audio::CORE_TYPES_CPP_VERSION::implementati
+ 
+ namespace {
+ 
++// xz1c: the codec port (SLIM_0_RX: headphones and speaker) is configured by Sony's HAL on the
++// first write after standby. Read what it really was set to, off the write thread (opening the
++// mixer enumerates thousands of controls), and publish "rate/bits/uptime_ms" so the Hi-Fi
++// Audio app shows measured values. Re-read every 5 s while playing, and after any standby.
++namespace xz1c {
++std::atomic<int> gGeneration{0};
++std::mutex gLock;
++std::condition_variable gWake;
++bool gWanted = false;
++
++int rateOf(const char* name) {  // "KHZ_44P1" -> 44100, "KHZ_48" -> 48000
++    if (name == nullptr || strncmp(name, "KHZ_", 4) != 0) return 0;
++    const char* p = name + 4;
++    int whole = atoi(p);
++    const char* dot = strchr(p, 'P');
++    int frac = dot != nullptr ? atoi(dot + 1) : 0;
++    return whole * 1000 + frac * 100;
++}
++
++int bitsOf(const char* name) {  // "S16_LE" -> 16, "S24_3LE" -> 24
++    if (name == nullptr || name[0] != 'S') return 0;
++    return atoi(name + 1);
++}
++
++void worker() {
++    struct mixer* mixer = nullptr;
++    for (;;) {
++        {
++            std::unique_lock<std::mutex> l(gLock);
++            gWake.wait(l, [] { return gWanted; });
++            gWanted = false;
++        }
++        usleep(100 * 1000);  // let the HAL finish configuring the port
++        if (mixer == nullptr) mixer = mixer_open(0);
++        if (mixer == nullptr) continue;
++        struct mixer_ctl* rate = mixer_get_ctl_by_name(mixer, "SLIM_0_RX SampleRate");
++        struct mixer_ctl* format = mixer_get_ctl_by_name(mixer, "SLIM_0_RX Format");
++        if (rate == nullptr || format == nullptr) continue;
++        int hz = rateOf(mixer_ctl_get_enum_string(rate, mixer_ctl_get_value(rate, 0)));
++        int bits = bitsOf(mixer_ctl_get_enum_string(format, mixer_ctl_get_value(format, 0)));
++        if (hz <= 0 || bits <= 0) continue;
++        struct timespec now;
++        clock_gettime(CLOCK_MONOTONIC, &now);
++        char value[PROPERTY_VALUE_MAX];
++        snprintf(value, sizeof(value), "%d/%d/%lld", hz, bits,
++                 (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000);
++        property_set("vendor.xz1c.audio.chip", value);
++    }
++}
++
++void request() {
++    static std::once_flag started;
++    std::call_once(started, [] { std::thread(worker).detach(); });
++    {
++        std::lock_guard<std::mutex> l(gLock);
++        gWanted = true;
++    }
++    gWake.notify_one();
++}
++}  // namespace xz1c
++
+ class WriteThread : public Thread {
+    public:
+     // WriteThread's lifespan never exceeds StreamOut's lifespan.
+@@ -76,6 +148,8 @@ class WriteThread : public Thread {
+     EventFlag* mEfGroup;
+     std::unique_ptr<uint8_t[]> mBuffer;
+     IStreamOut::WriteStatus mStatus;
++    int mXz1cGeneration = -1;
++    int64_t mXz1cLastRead = 0;
+ 
+     bool threadLoop() override;
+ 
+@@ -92,6 +166,13 @@ void WriteThread::doWrite() {
+         ssize_t writeResult = mStream->write(mStream, &mBuffer[0], availToRead);
+         if (writeResult >= 0) {
+             mStatus.reply.written = writeResult;
++            int generation = xz1c::gGeneration.load();
++            int64_t now = elapsedRealtime();
++            if (writeResult > 0 && (generation != mXz1cGeneration || now - mXz1cLastRead > 5000)) {
++                mXz1cGeneration = generation;
++                mXz1cLastRead = now;
++                xz1c::request();
++            }
+         } else {
+             mStatus.retval = Stream::analyzeStatus("write", writeResult);
+         }
+@@ -263,6 +344,7 @@ Return<Result> StreamOut::removeEffect(uint64_t effectId) {
+ }
+ 
+ Return<Result> StreamOut::standby() {
++    xz1c::gGeneration++;  // the port may be reconfigured on the next start
+     return mStreamCommon->standby();
+ }
+ 

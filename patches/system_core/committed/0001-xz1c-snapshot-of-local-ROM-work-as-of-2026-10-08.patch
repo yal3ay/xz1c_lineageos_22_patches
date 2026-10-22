@@ -1,0 +1,43 @@
+From 497716c10586de8952e253e983dcc2abe58d2d23 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:19 +0800
+Subject: [PATCH] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I043d47fe5654d47ccf52c648fef732ad22efac2a
+---
+ fs_mgr/fs_mgr.cpp | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/fs_mgr/fs_mgr.cpp b/fs_mgr/fs_mgr.cpp
+index 1d881b95b..22ef5a594 100644
+--- a/fs_mgr/fs_mgr.cpp
++++ b/fs_mgr/fs_mgr.cpp
+@@ -762,6 +762,22 @@ static int prepare_fs_for_mount(const std::string& blk_device, const FstabEntry&
+                 fs_stat |= FS_STAT_UNCLEAN_SHUTDOWN;
+             }
+ 
++            // XZ1C: never run tune2fs on a filesystem that has not been checked. Upgrading
++            // from builds whose fstab still asked for quotas (e.g. 20261005) toggles the
++            // quota feature on first boot; toggling it before e2fsck corrupted /data here
++            // (2026-10-06). So when the quota feature must change, fsck first. Enabling
++            // still gets the usual second fsck below (FS_STAT_QUOTA_ENABLED); unchanged
++            // quotas behave exactly as before.
++            const bool has_quota =
++                    (sb.s_feature_ro_compat & cpu_to_le32(EXT4_FEATURE_RO_COMPAT_QUOTA)) != 0;
++            if (has_quota != entry.fs_mgr_flags.quota) {
++                LINFO << "Checking " << blk_device << " before changing quotas";
++                check_fs(blk_device, entry.fs_type, mount_point, &fs_stat);
++                if (!read_ext4_superblock(blk_device, &sb, &fs_stat)) {
++                    return fs_stat;
++                }
++            }
++
+             // Note: quotas should be enabled before running fsck.
+             tune_quota(blk_device, entry, &sb, &fs_stat);
+         } else {
+-- 
+2.43.0
+

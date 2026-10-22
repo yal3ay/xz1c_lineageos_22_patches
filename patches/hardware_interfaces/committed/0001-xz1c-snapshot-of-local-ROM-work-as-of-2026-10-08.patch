@@ -1,0 +1,67 @@
+From d7fd885662043dbac43c4c60e7bd23a8f2d9d398 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:20 +0800
+Subject: [PATCH] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: Ide7b6a095e29da010b9401388e88905b546cfc9e
+---
+ audio/core/all-versions/default/StreamIn.cpp | 32 ++++++++++++++++++--
+ 1 file changed, 30 insertions(+), 2 deletions(-)
+
+diff --git a/audio/core/all-versions/default/StreamIn.cpp b/audio/core/all-versions/default/StreamIn.cpp
+index 2bea425f26..aea81f5576 100644
+--- a/audio/core/all-versions/default/StreamIn.cpp
++++ b/audio/core/all-versions/default/StreamIn.cpp
+@@ -572,8 +572,36 @@ Return<void> StreamIn::getActiveMicrophones(getActiveMicrophones_cb _hidl_cb) {
+ #endif
+ 
+ #if MAJOR_VERSION >= 5
++
++/*
++ * 【本项目改动 2026-09-22】lilac (Xperia XZ1 Compact) 上禁用麦克风指向/变焦这组可选接口。
++ *
++ * 症状：/data/tombstones 中三次崩溃（09-19 10:06、09-21 22:02、09-22 07:10，约每天一次）
++ *     signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0
++ *     #00 pc 00000000  <unknown>                                  ← 跳到空指针
++ *     #01 StreamIn::setMicrophoneFieldDimension(float)+56
++ *     #02 BnHwStreamIn::_hidl_setMicrophoneFieldDimension
++ *   崩溃后 audioserver 随之重启，录音 / 通话被打断。
++ *
++ * 排查已确认：
++ *   - 设备上的 android.hardware.audio@6.0-impl.so 与本树构建产物 sha256 完全一致
++ *     (a26a5216...)，所以下面那两处判空**确实在运行的二进制里**；
++ *   - vendor 的 audio.primary.msm8998.so 里也存在 set_microphone 相关符号。
++ *   即：判空通过、真正调用时函数指针却是 0。最可能的解释是 vendor 的 legacy HAL
++ *   结构体比当前 HIDL 封装层期望的更短 —— set_microphone_direction /
++ *   set_microphone_field_dimension 是 Android 10 才加进 audio_stream_in 的，
++ *   而这块 vendor blob 的年代更早，于是读到的是越界内存（时有时无，故偶发）。
++ *
++ * 处理：这组接口在 HAL 协议里本就是可选的，返回 NOT_SUPPORTED 是合法应答；
++ * 而它当前的实际行为是崩溃，等于本来就不可用。因此直接拒绝，不去碰那个指针。
++ * 代价：麦克风变焦 / 指向功能不可用（极少应用使用）。
++ *
++ * 将来 vendor blob 更新到匹配的 ABI 后，把下面这个常量改回 true 即可恢复。
++ */
++static constexpr bool kMicrophoneControlSupported = false;
++
+ Return<Result> StreamIn::setMicrophoneDirection(MicrophoneDirection direction) {
+-    if (mStream->set_microphone_direction == nullptr) {
++    if (!kMicrophoneControlSupported || mStream->set_microphone_direction == nullptr) {
+         return Result::NOT_SUPPORTED;
+     }
+     if (!common::utils::isValidHidlEnum(direction)) {
+@@ -587,7 +615,7 @@ Return<Result> StreamIn::setMicrophoneDirection(MicrophoneDirection direction) {
+ }
+ 
+ Return<Result> StreamIn::setMicrophoneFieldDimension(float zoom) {
+-    if (mStream->set_microphone_field_dimension == nullptr) {
++    if (!kMicrophoneControlSupported || mStream->set_microphone_field_dimension == nullptr) {
+         return Result::NOT_SUPPORTED;
+     }
+     if (std::isnan(zoom) || zoom < -1 || zoom > 1) {
+-- 
+2.43.0
+

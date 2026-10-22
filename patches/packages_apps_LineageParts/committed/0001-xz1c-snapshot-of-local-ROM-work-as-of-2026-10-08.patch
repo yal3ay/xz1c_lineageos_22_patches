@@ -1,0 +1,1156 @@
+From 8bbe7c363cfb38cf1e66d8df3cc0e3633030d63b Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:16 +0800
+Subject: [PATCH 1/2] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I3845b1523f97febd0b5987f141074ace95a6f609
+---
+ res/layout/white_balance_bars.xml             |   9 +
+ res/layout/white_balance_custom.xml           |  95 +++++++++
+ res/values-zh-rCN/strings.xml                 |  23 +++
+ res/values-zh-rTW/strings.xml                 |  22 ++
+ res/values/strings.xml                        |  23 +++
+ res/xml/button_settings.xml                   |  28 ++-
+ res/xml/image_quality_settings.xml            |  55 +++++
+ res/xml/parts_catalog.xml                     |   7 +
+ res/xml/white_balance_settings.xml            |  45 ++++
+ .../lineageparts/input/ButtonSettings.java    | 146 ++++++++++++-
+ .../livedisplay/ColorBarsView.java            |  47 +++++
+ .../livedisplay/ImageQuality.java             | 192 ++++++++++++++++++
+ .../livedisplay/ImageQualitySettings.java     |  81 ++++++++
+ .../livedisplay/LiveDisplaySettings.java      |  12 ++
+ .../livedisplay/WhiteBalanceSettings.java     | 144 +++++++++++++
+ 15 files changed, 923 insertions(+), 6 deletions(-)
+ create mode 100644 res/layout/white_balance_bars.xml
+ create mode 100644 res/layout/white_balance_custom.xml
+ create mode 100644 res/xml/image_quality_settings.xml
+ create mode 100644 res/xml/white_balance_settings.xml
+ create mode 100644 src/org/lineageos/lineageparts/livedisplay/ColorBarsView.java
+ create mode 100644 src/org/lineageos/lineageparts/livedisplay/ImageQuality.java
+ create mode 100644 src/org/lineageos/lineageparts/livedisplay/ImageQualitySettings.java
+ create mode 100644 src/org/lineageos/lineageparts/livedisplay/WhiteBalanceSettings.java
+
+diff --git a/res/layout/white_balance_bars.xml b/res/layout/white_balance_bars.xml
+new file mode 100644
+index 0000000..0302bec
+--- /dev/null
++++ b/res/layout/white_balance_bars.xml
+@@ -0,0 +1,9 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++     SPDX-FileCopyrightText: 2026 XZ1C project
++     SPDX-License-Identifier: Apache-2.0
++-->
++<org.lineageos.lineageparts.livedisplay.ColorBarsView
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    android:layout_width="match_parent"
++    android:layout_height="160dp" />
+diff --git a/res/layout/white_balance_custom.xml b/res/layout/white_balance_custom.xml
+new file mode 100644
+index 0000000..b1a4158
+--- /dev/null
++++ b/res/layout/white_balance_custom.xml
+@@ -0,0 +1,95 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++     SPDX-FileCopyrightText: 2026 XZ1C project
++     SPDX-License-Identifier: Apache-2.0
++-->
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    android:layout_width="match_parent"
++    android:layout_height="wrap_content"
++    android:orientation="vertical"
++    android:paddingStart="?android:attr/listPreferredItemPaddingStart"
++    android:paddingEnd="?android:attr/listPreferredItemPaddingEnd"
++    android:paddingTop="8dp"
++    android:paddingBottom="16dp">
++
++    <LinearLayout
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:orientation="horizontal">
++        <TextView
++            android:layout_width="0dp"
++            android:layout_height="wrap_content"
++            android:layout_weight="1"
++            android:text="@string/white_balance_temperature"
++            android:textAppearance="?android:attr/textAppearanceListItem" />
++        <TextView
++            android:id="@+id/wb_temperature_value"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:textAppearance="?android:attr/textAppearanceListItemSecondary" />
++    </LinearLayout>
++    <SeekBar
++        android:id="@+id/wb_temperature"
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:paddingTop="8dp"
++        android:paddingBottom="4dp"
++        android:progressTint="#3D6FD9"
++        android:thumbTint="#3D6FD9" />
++    <TextView
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:text="@string/white_balance_temperature_marks"
++        android:textAppearance="?android:attr/textAppearanceSmall" />
++
++    <LinearLayout
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:layout_marginTop="20dp"
++        android:orientation="horizontal">
++        <TextView
++            android:layout_width="0dp"
++            android:layout_height="wrap_content"
++            android:layout_weight="1"
++            android:text="@string/white_balance_red"
++            android:textAppearance="?android:attr/textAppearanceListItem" />
++        <TextView
++            android:id="@+id/wb_red_value"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:textAppearance="?android:attr/textAppearanceListItemSecondary" />
++    </LinearLayout>
++    <SeekBar
++        android:id="@+id/wb_red"
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:paddingTop="8dp"
++        android:progressTint="#E53935"
++        android:thumbTint="#E53935" />
++
++    <LinearLayout
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:layout_marginTop="20dp"
++        android:orientation="horizontal">
++        <TextView
++            android:layout_width="0dp"
++            android:layout_height="wrap_content"
++            android:layout_weight="1"
++            android:text="@string/white_balance_green"
++            android:textAppearance="?android:attr/textAppearanceListItem" />
++        <TextView
++            android:id="@+id/wb_green_value"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:textAppearance="?android:attr/textAppearanceListItemSecondary" />
++    </LinearLayout>
++    <SeekBar
++        android:id="@+id/wb_green"
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:paddingTop="8dp"
++        android:progressTint="#43A047"
++        android:thumbTint="#43A047" />
++
++</LinearLayout>
+diff --git a/res/values-zh-rCN/strings.xml b/res/values-zh-rCN/strings.xml
+index 7a01d0a..fbe80db 100644
+--- a/res/values-zh-rCN/strings.xml
++++ b/res/values-zh-rCN/strings.xml
+@@ -534,4 +534,27 @@
+     <string name="sms_security_check_limit_summary">应用在 1 分钟内发送不超过 %s 条短信无需确认</string>
+     <string name="sms_security_check_limit_summary_none">应用在发送任何短信前必须获得您的确认</string>
+     <string name="sms_security_check_limit_always_confirm">始终确认</string>
++    <string name="hardware_keys_action_launch_app">启动应用…</string>
++    <!-- XZ1C: Sony 风格图像质量设定 -->
++    <string name="image_quality_title">图像质量设定</string>
++    <string name="image_quality_summary">大师模式、白平衡</string>
++    <string name="image_quality_gamut_category">色域和对比度</string>
++    <string name="image_quality_creator_mode_title">大师模式</string>
++    <string name="image_quality_creator_mode_summary">通过 Sony 原厂 sRGB／BT.709 色彩校准与 D65 白点，忠实再现创作者的预期视觉。</string>
++    <string name="image_quality_standard_mode_title">标准模式</string>
++    <string name="image_quality_standard_mode_summary">通过扩展原始色域获得绚丽的色彩，进而实现更明亮、更鲜艳的色彩效果。</string>
++    <string name="image_quality_livedisplay_note">LiveDisplay（夜间模式、户外模式）会在这些设定之上继续生效。</string>
++    <string name="white_balance_title">白平衡</string>
++    <string name="white_balance_current_mode">当前图像质量设定：%1$s</string>
++    <string name="white_balance_warm">暖色调</string>
++    <string name="white_balance_medium">中</string>
++    <string name="white_balance_medium_summary">D65，大师模式使用的白点</string>
++    <string name="white_balance_cool">冷色调</string>
++    <string name="white_balance_custom">自定义</string>
++    <string name="white_balance_temperature">色温</string>
++    <string name="white_balance_temperature_value">%1$dK</string>
++    <string name="white_balance_temperature_marks">D50（5000K）· D55 · D61 · D65（6500K）· D93（9300K）</string>
++    <string name="white_balance_red">红色</string>
++    <string name="white_balance_green">偏绿</string>
++    <string name="image_quality_livedisplay_summary">日夜色温、户外模式、阅读模式。叠加在上方白平衡之上生效。</string>
+ </resources>
+diff --git a/res/values-zh-rTW/strings.xml b/res/values-zh-rTW/strings.xml
+index 88eb22e..75454a0 100644
+--- a/res/values-zh-rTW/strings.xml
++++ b/res/values-zh-rTW/strings.xml
+@@ -530,4 +530,26 @@
+     <string name="sms_security_check_limit_summary">在使用者認可之前，應用程式在 1 分鐘內只能傳送 %s 則訊息</string>
+     <string name="sms_security_check_limit_summary_none">未經確認的應用程式不允許傳送任何訊息</string>
+     <string name="sms_security_check_limit_always_confirm">一律確認</string>
++    <!-- XZ1C: Sony 風格影像品質設定 -->
++    <string name="image_quality_title">影像品質設定</string>
++    <string name="image_quality_summary">導演模式、白平衡</string>
++    <string name="image_quality_gamut_category">色域和對比</string>
++    <string name="image_quality_creator_mode_title">導演模式</string>
++    <string name="image_quality_creator_mode_summary">透過 Sony 原廠 sRGB／BT.709 色彩校準與 D65 白點，忠實呈現創作者所預想的畫面。</string>
++    <string name="image_quality_standard_mode_title">標準模式</string>
++    <string name="image_quality_standard_mode_summary">藉由延伸原始色域，獲得更明亮且更生動的豔麗色彩。</string>
++    <string name="image_quality_livedisplay_note">LiveDisplay（夜間模式、戶外模式）會在這些設定之上繼續生效。</string>
++    <string name="white_balance_title">白平衡</string>
++    <string name="white_balance_current_mode">目前影像品質設定：%1$s</string>
++    <string name="white_balance_warm">暖色調</string>
++    <string name="white_balance_medium">中</string>
++    <string name="white_balance_medium_summary">D65，導演模式使用的白點</string>
++    <string name="white_balance_cool">冷色調</string>
++    <string name="white_balance_custom">自訂</string>
++    <string name="white_balance_temperature">色溫</string>
++    <string name="white_balance_temperature_value">%1$dK</string>
++    <string name="white_balance_temperature_marks">D50（5000K）· D55 · D61 · D65（6500K）· D93（9300K）</string>
++    <string name="white_balance_red">紅色</string>
++    <string name="white_balance_green">偏綠</string>
++    <string name="image_quality_livedisplay_summary">日夜色溫、戶外模式、閱讀模式。疊加在上方白平衡之上生效。</string>
+ </resources>
+diff --git a/res/values/strings.xml b/res/values/strings.xml
+index d7fa869..9c83c13 100644
+--- a/res/values/strings.xml
++++ b/res/values/strings.xml
+@@ -14,6 +14,7 @@
+     <string name="cancel">Cancel</string>
+     <string name="add">Add</string>
+     <string name="choose_app">Choose app</string>
++    <string name="hardware_keys_action_launch_app">Launch app…</string>
+     <string name="reset">Reset</string>
+     <string name="advanced">Advanced</string>
+     <string name="settings">Settings</string>
+@@ -682,4 +683,26 @@
+     <string name="sms_security_check_limit_summary">Apps can send %s messages in 1 minute before requiring confirmation</string>
+     <string name="sms_security_check_limit_summary_none">Apps are not allowed to send any messages without confirmation</string>
+     <string name="sms_security_check_limit_always_confirm">Always confirm</string>
++    <!-- XZ1C: Sony-style image quality settings -->
++    <string name="image_quality_title">Image quality settings</string>
++    <string name="image_quality_summary">Creator mode, white balance</string>
++    <string name="image_quality_gamut_category">Color gamut and contrast</string>
++    <string name="image_quality_creator_mode_title">Creator mode</string>
++    <string name="image_quality_creator_mode_summary">Reproduces images faithfully to the creator\'s intent, using Sony\'s factory sRGB / BT.709 calibration with a D65 white point.</string>
++    <string name="image_quality_standard_mode_title">Standard mode</string>
++    <string name="image_quality_standard_mode_summary">Expands the original color gamut for brighter, more vivid colors.</string>
++    <string name="image_quality_livedisplay_note">LiveDisplay (night mode, outdoor mode) keeps working on top of these settings.</string>
++    <string name="white_balance_title">White balance</string>
++    <string name="white_balance_current_mode">Current image quality setting: %1$s</string>
++    <string name="white_balance_warm">Warm</string>
++    <string name="white_balance_medium">Medium</string>
++    <string name="white_balance_medium_summary">D65, used by Creator mode</string>
++    <string name="white_balance_cool">Cool</string>
++    <string name="white_balance_custom">Custom</string>
++    <string name="white_balance_temperature">Color temperature</string>
++    <string name="white_balance_temperature_value">%1$dK</string>
++    <string name="white_balance_temperature_marks">D50 (5000K) · D55 · D61 · D65 (6500K) · D93 (9300K)</string>
++    <string name="white_balance_red">Red</string>
++    <string name="white_balance_green">Green</string>
++    <string name="image_quality_livedisplay_summary">Day/night color temperature, outdoor mode, reading mode. Applied on top of the white balance above.</string>
+ </resources>
+diff --git a/res/xml/button_settings.xml b/res/xml/button_settings.xml
+index 0590921..7088c51 100644
+--- a/res/xml/button_settings.xml
++++ b/res/xml/button_settings.xml
+@@ -265,11 +265,29 @@
+             android:summary="@string/camera_sleep_on_release_summary"
+             android:defaultValue="false" />
+ 
+-        <lineageos.preference.LineageSystemSettingSwitchPreference
+-            android:key="camera_launch"
+-            android:title="@string/camera_launch_title"
+-            android:summary="@string/camera_launch_summary"
+-            android:defaultValue="false" />
++        <ListPreference
++            android:key="hardware_keys_camera_press"
++            android:dialogTitle="@string/hardware_keys_short_press_title"
++            android:title="@string/hardware_keys_short_press_title"
++            android:entries="@array/hardware_keys_action_entries"
++            android:entryValues="@array/hardware_keys_action_values"
++            android:persistent="false" />
++
++        <ListPreference
++            android:key="hardware_keys_camera_long_press"
++            android:dialogTitle="@string/hardware_keys_long_press_title"
++            android:title="@string/hardware_keys_long_press_title"
++            android:entries="@array/hardware_keys_action_entries"
++            android:entryValues="@array/hardware_keys_action_values"
++            android:persistent="false" />
++
++        <ListPreference
++            android:key="hardware_keys_camera_double_tap"
++            android:dialogTitle="@string/hardware_keys_double_tap_title"
++            android:title="@string/hardware_keys_double_tap_title"
++            android:entries="@array/hardware_keys_action_entries"
++            android:entryValues="@array/hardware_keys_action_values"
++            android:persistent="false" />
+ 
+     </PreferenceCategory>
+ 
+diff --git a/res/xml/image_quality_settings.xml b/res/xml/image_quality_settings.xml
+new file mode 100644
+index 0000000..3472586
+--- /dev/null
++++ b/res/xml/image_quality_settings.xml
+@@ -0,0 +1,55 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++     SPDX-FileCopyrightText: 2026 XZ1C project
++     SPDX-License-Identifier: Apache-2.0
++-->
++<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
++        android:key="image_quality"
++        android:title="@string/image_quality_title">
++
++    <com.android.settingslib.widget.LayoutPreference
++        android:layout="@layout/color_mode_preview"
++        android:selectable="false" />
++
++    <PreferenceCategory
++        android:key="image_quality_gamut"
++        android:title="@string/image_quality_gamut_category">
++
++        <CheckBoxPreference
++            android:key="image_quality_creator_mode"
++            android:title="@string/image_quality_creator_mode_title"
++            android:summary="@string/image_quality_creator_mode_summary"
++            android:persistent="false" />
++
++        <CheckBoxPreference
++            android:key="image_quality_standard_mode"
++            android:title="@string/image_quality_standard_mode_title"
++            android:summary="@string/image_quality_standard_mode_summary"
++            android:persistent="false" />
++
++    </PreferenceCategory>
++
++    <PreferenceCategory
++        android:key="image_quality_white_balance_category"
++        android:title="@string/white_balance_title">
++
++        <Preference
++            android:key="image_quality_white_balance"
++            android:title="@string/white_balance_title"
++            android:fragment="org.lineageos.lineageparts.livedisplay.WhiteBalanceSettings" />
++
++    </PreferenceCategory>
++
++    <PreferenceCategory
++        android:key="image_quality_livedisplay_category"
++        android:title="@*lineageos.platform:string/live_display_title">
++
++        <Preference
++            android:key="image_quality_livedisplay"
++            android:title="@*lineageos.platform:string/live_display_title"
++            android:summary="@string/image_quality_livedisplay_summary"
++            android:fragment="org.lineageos.lineageparts.livedisplay.LiveDisplaySettings" />
++
++    </PreferenceCategory>
++
++</PreferenceScreen>
+diff --git a/res/xml/parts_catalog.xml b/res/xml/parts_catalog.xml
+index d6b19c0..a8ed4e3 100644
+--- a/res/xml/parts_catalog.xml
++++ b/res/xml/parts_catalog.xml
+@@ -38,6 +38,13 @@
+           android:fragment="org.lineageos.lineageparts.contributors.ContributorsCloudFragment"
+           lineage:xmlRes="@xml/contributors_cloud" />
+ 
++    <!-- XZ1C: Sony-style image quality settings (Creator mode, white balance) -->
++    <part android:key="image_quality"
++          android:title="@string/image_quality_title"
++          android:summary="@string/image_quality_summary"
++          android:fragment="org.lineageos.lineageparts.livedisplay.ImageQualitySettings"
++          lineage:xmlRes="@xml/image_quality_settings" />
++
+     <part android:key="livedisplay"
+           android:title="@*lineageos.platform:string/live_display_title"
+           android:summary="@string/live_display_summary"
+diff --git a/res/xml/white_balance_settings.xml b/res/xml/white_balance_settings.xml
+new file mode 100644
+index 0000000..19c011f
+--- /dev/null
++++ b/res/xml/white_balance_settings.xml
+@@ -0,0 +1,45 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++     SPDX-FileCopyrightText: 2026 XZ1C project
++     SPDX-License-Identifier: Apache-2.0
++-->
++<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
++        android:key="white_balance"
++        android:title="@string/white_balance_title">
++
++    <com.android.settingslib.widget.LayoutPreference
++        android:layout="@layout/white_balance_bars"
++        android:selectable="false" />
++
++    <Preference
++        android:key="white_balance_info"
++        android:icon="@drawable/ic_info"
++        android:selectable="false" />
++
++    <CheckBoxPreference
++        android:key="white_balance_warm"
++        android:title="@string/white_balance_warm"
++        android:persistent="false" />
++
++    <CheckBoxPreference
++        android:key="white_balance_medium"
++        android:title="@string/white_balance_medium"
++        android:summary="@string/white_balance_medium_summary"
++        android:persistent="false" />
++
++    <CheckBoxPreference
++        android:key="white_balance_cool"
++        android:title="@string/white_balance_cool"
++        android:persistent="false" />
++
++    <CheckBoxPreference
++        android:key="white_balance_custom"
++        android:title="@string/white_balance_custom"
++        android:persistent="false" />
++
++    <com.android.settingslib.widget.LayoutPreference
++        android:key="white_balance_custom_sliders"
++        android:layout="@layout/white_balance_custom"
++        android:selectable="false" />
++
++</PreferenceScreen>
+diff --git a/src/org/lineageos/lineageparts/input/ButtonSettings.java b/src/org/lineageos/lineageparts/input/ButtonSettings.java
+index ef59043..8efaab2 100644
+--- a/src/org/lineageos/lineageparts/input/ButtonSettings.java
++++ b/src/org/lineageos/lineageparts/input/ButtonSettings.java
+@@ -16,6 +16,7 @@ import android.content.ContentResolver;
+ import android.content.Context;
+ import android.content.SharedPreferences;
+ import android.content.om.IOverlayManager;
++import android.content.pm.PackageManager;
+ import android.content.res.Resources;
+ import android.os.Bundle;
+ import android.os.Handler;
+@@ -30,6 +31,9 @@ import android.view.Display;
+ import android.view.IWindowManager;
+ import android.view.WindowManagerGlobal;
+ 
++import android.widget.ListView;
++
++import androidx.appcompat.app.AlertDialog;
+ import androidx.preference.ListPreference;
+ import androidx.preference.Preference;
+ import androidx.preference.PreferenceCategory;
+@@ -46,6 +50,7 @@ import org.lineageos.lineageparts.search.BaseSearchIndexProvider;
+ import org.lineageos.lineageparts.search.Searchable;
+ import org.lineageos.lineageparts.utils.DeviceUtils;
+ import org.lineageos.lineageparts.utils.TelephonyUtils;
++import org.lineageos.lineageparts.widget.PackageListAdapter;
+ 
+ import java.util.ArrayList;
+ import java.util.Arrays;
+@@ -61,6 +66,9 @@ public class ButtonSettings extends SettingsPreferenceFragment
+     private static final String KEY_CAMERA_LAUNCH = "camera_launch";
+     private static final String KEY_CAMERA_SLEEP_ON_RELEASE = "camera_sleep_on_release";
+     private static final String KEY_CAMERA_WAKE_SCREEN = "camera_wake_screen";
++    private static final String KEY_CAMERA_PRESS = "hardware_keys_camera_press";
++    private static final String KEY_CAMERA_LONG_PRESS = "hardware_keys_camera_long_press";
++    private static final String KEY_CAMERA_DOUBLE_TAP = "hardware_keys_camera_double_tap";
+     private static final String KEY_BACK_LONG_PRESS = "hardware_keys_back_long_press";
+     private static final String KEY_HOME_LONG_PRESS = "hardware_keys_home_long_press";
+     private static final String KEY_HOME_DOUBLE_TAP = "hardware_keys_home_double_tap";
+@@ -121,6 +129,10 @@ public class ButtonSettings extends SettingsPreferenceFragment
+     private ListPreference mAppSwitchLongPressAction;
+     private SwitchPreferenceCompat mCameraWakeScreen;
+     private SwitchPreferenceCompat mCameraSleepOnRelease;
++    private ListPreference mCameraPressAction;
++    private ListPreference mCameraLongPressAction;
++    private ListPreference mCameraDoubleTapAction;
++    private PackageListAdapter mPackageAdapter;
+     private ListPreference mVolumeKeyCursorControl;
+     private SwitchPreferenceCompat mSwapVolumeButtons;
+     private SwitchPreferenceCompat mVolumePanelOnLeft;
+@@ -365,6 +377,22 @@ public class ButtonSettings extends SettingsPreferenceFragment
+         if (hasCameraKey) {
+             mCameraWakeScreen = findPreference(KEY_CAMERA_WAKE_SCREEN);
+             mCameraSleepOnRelease = findPreference(KEY_CAMERA_SLEEP_ON_RELEASE);
++            mPackageAdapter = new PackageListAdapter(getActivity());
++
++            // Defaults must stay in step with config_{short,long,doubleTap}OnCameraBehavior
++            // in lineage-sdk: nothing on short press so the key keeps acting as a shutter,
++            // launch camera on long press, nothing on double tap.
++            Action cameraPressAction = Action.fromSettings(resolver,
++                    LineageSettings.System.KEY_CAMERA_ACTION, Action.NOTHING);
++            mCameraPressAction = initList(KEY_CAMERA_PRESS, cameraPressAction);
++
++            Action cameraLongPressAction = Action.fromSettings(resolver,
++                    LineageSettings.System.KEY_CAMERA_LONG_PRESS_ACTION, Action.LAUNCH_CAMERA);
++            mCameraLongPressAction = initList(KEY_CAMERA_LONG_PRESS, cameraLongPressAction);
++
++            Action cameraDoubleTapAction = Action.fromSettings(resolver,
++                    LineageSettings.System.KEY_CAMERA_DOUBLE_TAP_ACTION, Action.NOTHING);
++            mCameraDoubleTapAction = initList(KEY_CAMERA_DOUBLE_TAP, cameraDoubleTapAction);
+ 
+             if (!showCameraWake) {
+                 prefScreen.removePreference(mCameraWakeScreen);
+@@ -512,6 +540,35 @@ public class ButtonSettings extends SettingsPreferenceFragment
+             mAssistLongPressAction.setEntryValues(actionValues);
+         }
+ 
++        if (hasCameraKey) {
++            // The camera key additionally offers "launch a specific app". The navigation keys
++            // deliberately do not: a fixed action is the right thing for those.
++            List<String> cameraEntries = new ArrayList<>(entries);
++            List<String> cameraValues = new ArrayList<>(values);
++            cameraEntries.add(res.getString(R.string.hardware_keys_action_launch_app));
++            cameraValues.add(Integer.toString(Action.LAUNCH_APP.ordinal()));
++            String[] cameraActionEntries = cameraEntries.toArray(new String[0]);
++            String[] cameraActionValues = cameraValues.toArray(new String[0]);
++
++            mCameraPressAction.setEntries(cameraActionEntries);
++            mCameraPressAction.setEntryValues(cameraActionValues);
++
++            mCameraLongPressAction.setEntries(cameraActionEntries);
++            mCameraLongPressAction.setEntryValues(cameraActionValues);
++
++            mCameraDoubleTapAction.setEntries(cameraActionEntries);
++            mCameraDoubleTapAction.setEntryValues(cameraActionValues);
++
++            // Summaries have to be refreshed once the entries are swapped in: LAUNCH_APP is
++            // not part of the XML-declared array, so initList() could not resolve its label.
++            refreshCameraSummary(mCameraPressAction,
++                    LineageSettings.System.KEY_CAMERA_ACTION_PACKAGE);
++            refreshCameraSummary(mCameraLongPressAction,
++                    LineageSettings.System.KEY_CAMERA_LONG_PRESS_ACTION_PACKAGE);
++            refreshCameraSummary(mCameraDoubleTapAction,
++                    LineageSettings.System.KEY_CAMERA_DOUBLE_TAP_ACTION_PACKAGE);
++        }
++
+         if (hasAppSwitchKey) {
+             mAppSwitchPressAction.setEntries(actionEntries);
+             mAppSwitchPressAction.setEntryValues(actionValues);
+@@ -574,6 +631,79 @@ public class ButtonSettings extends SettingsPreferenceFragment
+         return list;
+     }
+ 
++    /**
++     * Camera key variant of {@link #handleListChange}: picking LAUNCH_APP opens an app chooser
++     * and nothing is persisted until an app is actually chosen, so cancelling the dialog leaves
++     * the previous binding intact.
++     */
++    private boolean handleCameraListChange(ListPreference pref, Object newValue,
++            String actionSetting, String packageSetting) {
++        if (Integer.parseInt((String) newValue) == Action.LAUNCH_APP.ordinal()) {
++            showCameraAppPicker(pref, actionSetting, packageSetting);
++            return false;
++        }
++        handleListChange(pref, newValue, actionSetting);
++        // Empty rather than null: LineageSettings rejects null via sNonNullStringValidator,
++        // which would throw IllegalArgumentException. PhoneWindowManager treats an empty
++        // package the same as an unset one.
++        LineageSettings.System.putString(getContentResolver(), packageSetting, "");
++        return true;
++    }
++
++    private void showCameraAppPicker(ListPreference pref, String actionSetting,
++            String packageSetting) {
++        final ListView list = new ListView(requireActivity());
++        list.setAdapter(mPackageAdapter);
++        list.setDivider(null);
++        list.setPadding(0, getResources().getDimensionPixelOffset(
++                R.dimen.package_list_padding_top), 0, 0);
++
++        final AlertDialog dialog = new AlertDialog.Builder(requireActivity())
++                .setTitle(R.string.choose_app)
++                .setView(list)
++                .create();
++
++        list.setOnItemClickListener((parent, view, position, id) -> {
++            PackageListAdapter.PackageItem info =
++                    (PackageListAdapter.PackageItem) parent.getItemAtPosition(position);
++            LineageSettings.System.putInt(getContentResolver(), actionSetting,
++                    Action.LAUNCH_APP.ordinal());
++            LineageSettings.System.putString(getContentResolver(), packageSetting,
++                    info.packageName);
++            pref.setValue(Integer.toString(Action.LAUNCH_APP.ordinal()));
++            pref.setSummary(info.title);
++            dialog.dismiss();
++        });
++
++        dialog.show();
++    }
++
++    /** Show the chosen app's label as the summary when a gesture is bound to LAUNCH_APP. */
++    private void refreshCameraSummary(ListPreference pref, String packageSetting) {
++        if (pref == null || pref.getValue() == null) {
++            return;
++        }
++        if (Integer.parseInt(pref.getValue()) == Action.LAUNCH_APP.ordinal()) {
++            pref.setSummary(resolveAppLabel(LineageSettings.System.getString(
++                    getContentResolver(), packageSetting)));
++        } else {
++            pref.setSummary(pref.getEntry());
++        }
++    }
++
++    private CharSequence resolveAppLabel(String packageName) {
++        if (packageName == null || packageName.isEmpty()) {
++            return getString(R.string.hardware_keys_action_nothing);
++        }
++        final PackageManager pm = requireActivity().getPackageManager();
++        try {
++            return pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0));
++        } catch (PackageManager.NameNotFoundException e) {
++            // Uninstalled since it was picked. Show the raw name rather than an empty summary.
++            return packageName;
++        }
++    }
++
+     private void handleListChange(ListPreference pref, Object newValue, String setting) {
+         String value = (String) newValue;
+         int index = pref.findIndexOfValue(value);
+@@ -621,6 +751,18 @@ public class ButtonSettings extends SettingsPreferenceFragment
+             handleListChange(mAssistLongPressAction, newValue,
+                     LineageSettings.System.KEY_ASSIST_LONG_PRESS_ACTION);
+             return true;
++        } else if (preference == mCameraPressAction) {
++            return handleCameraListChange(mCameraPressAction, newValue,
++                    LineageSettings.System.KEY_CAMERA_ACTION,
++                    LineageSettings.System.KEY_CAMERA_ACTION_PACKAGE);
++        } else if (preference == mCameraLongPressAction) {
++            return handleCameraListChange(mCameraLongPressAction, newValue,
++                    LineageSettings.System.KEY_CAMERA_LONG_PRESS_ACTION,
++                    LineageSettings.System.KEY_CAMERA_LONG_PRESS_ACTION_PACKAGE);
++        } else if (preference == mCameraDoubleTapAction) {
++            return handleCameraListChange(mCameraDoubleTapAction, newValue,
++                    LineageSettings.System.KEY_CAMERA_DOUBLE_TAP_ACTION,
++                    LineageSettings.System.KEY_CAMERA_DOUBLE_TAP_ACTION_PACKAGE);
+         } else if (preference == mAppSwitchPressAction) {
+             handleListChange(mAppSwitchPressAction, newValue,
+                     LineageSettings.System.KEY_APP_SWITCH_ACTION);
+@@ -917,7 +1059,9 @@ public class ButtonSettings extends SettingsPreferenceFragment
+ 
+             if (!DeviceUtils.hasCameraKey(context)) {
+                 result.add(CATEGORY_CAMERA);
+-                result.add(KEY_CAMERA_LAUNCH);
++                result.add(KEY_CAMERA_PRESS);
++                result.add(KEY_CAMERA_LONG_PRESS);
++                result.add(KEY_CAMERA_DOUBLE_TAP);
+                 result.add(KEY_CAMERA_SLEEP_ON_RELEASE);
+                 result.add(KEY_CAMERA_WAKE_SCREEN);
+             } else if (!DeviceUtils.canWakeUsingCameraKey(context)) {
+diff --git a/src/org/lineageos/lineageparts/livedisplay/ColorBarsView.java b/src/org/lineageos/lineageparts/livedisplay/ColorBarsView.java
+new file mode 100644
+index 0000000..9aa0283
+--- /dev/null
++++ b/src/org/lineageos/lineageparts/livedisplay/ColorBarsView.java
+@@ -0,0 +1,47 @@
++/*
++ * SPDX-FileCopyrightText: 2026 XZ1C project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package org.lineageos.lineageparts.livedisplay;
++
++import android.content.Context;
++import android.graphics.Canvas;
++import android.graphics.Color;
++import android.graphics.Paint;
++import android.util.AttributeSet;
++import android.view.View;
++
++/** XZ1C: colour bars + grey steps test pattern for the white balance page (like Sony's). */
++public class ColorBarsView extends View {
++    private static final int[] BARS = {
++            Color.rgb(192, 192, 0), Color.rgb(0, 192, 192), Color.rgb(0, 192, 0),
++            Color.rgb(192, 0, 192), Color.rgb(192, 0, 0), Color.rgb(0, 0, 192),
++            Color.BLACK,
++    };
++    private static final int GREY_STEPS = 8;
++
++    private final Paint mPaint = new Paint();
++
++    public ColorBarsView(Context context, AttributeSet attrs) {
++        super(context, attrs);
++    }
++
++    @Override
++    protected void onDraw(Canvas canvas) {
++        final float w = getWidth();
++        final float h = getHeight();
++        final float barsH = h * 0.62f;
++        final float barW = w / BARS.length;
++        for (int i = 0; i < BARS.length; i++) {
++            mPaint.setColor(BARS[i]);
++            canvas.drawRect(i * barW, 0, (i + 1) * barW, barsH, mPaint);
++        }
++        final float stepW = w / GREY_STEPS;
++        for (int i = 0; i < GREY_STEPS; i++) {
++            final int v = Math.round(255f * i / (GREY_STEPS - 1));
++            mPaint.setColor(Color.rgb(v, v, v));
++            canvas.drawRect(i * stepW, barsH, (i + 1) * stepW, h, mPaint);
++        }
++    }
++}
+diff --git a/src/org/lineageos/lineageparts/livedisplay/ImageQuality.java b/src/org/lineageos/lineageparts/livedisplay/ImageQuality.java
+new file mode 100644
+index 0000000..6e41f61
+--- /dev/null
++++ b/src/org/lineageos/lineageparts/livedisplay/ImageQuality.java
+@@ -0,0 +1,192 @@
++/*
++ * SPDX-FileCopyrightText: 2026 XZ1C project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package org.lineageos.lineageparts.livedisplay;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++
++import lineageos.hardware.DisplayMode;
++import lineageos.hardware.LineageHardwareManager;
++import lineageos.hardware.LiveDisplayManager;
++
++import java.util.Locale;
++
++/**
++ * XZ1C: Sony-style "Image quality settings" on top of LiveDisplay.
++ *
++ * Gamut: Creator mode = the panel's sRGB QDCM mode (Sony's own factory calibration,
++ * BT.709 primaries, D65); Standard mode = the DCI-P3 mode (wider, more vivid, Sony's default).
++ *
++ * White balance is written as LiveDisplay's base colour adjustment (display_color_adjustment).
++ * LiveDisplay's own day/night temperature and outdoor mode keep working: they are applied as a
++ * separate "additional" adjustment on top of this one.
++ */
++public final class ImageQuality {
++    public static final String PRESET_WARM = "warm";
++    public static final String PRESET_MEDIUM = "medium";
++    public static final String PRESET_COOL = "cool";
++    public static final String PRESET_CUSTOM = "custom";
++
++    public static final int TEMP_MIN = 5000;
++    public static final int TEMP_MAX = 9300;
++    public static final int TEMP_D65 = 6500;
++    public static final int TINT_MAX = 100;
++    public static final int TINT_NEUTRAL = 50;
++
++    private static final int TEMP_WARM = 5500;
++    private static final int TEMP_COOL = 7500;
++
++    private static final String PREFS = "image_quality";
++    private static final String KEY_PRESET = "wb_preset";
++    private static final String KEY_TEMP = "wb_temperature";
++    private static final String KEY_RED = "wb_red";
++    private static final String KEY_GREEN = "wb_green";
++
++    private final LineageHardwareManager mHardware;
++    private final LiveDisplayManager mLiveDisplay;
++    private final SharedPreferences mPrefs;
++
++    public ImageQuality(Context context) {
++        mHardware = LineageHardwareManager.getInstance(context);
++        mLiveDisplay = LiveDisplayManager.getInstance(context);
++        mPrefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
++    }
++
++    // ------------------------------------------------------------------ gamut
++
++    public DisplayMode getCreatorMode() {
++        return findMode("srgb");
++    }
++
++    public DisplayMode getStandardMode() {
++        DisplayMode mode = findMode("dci");
++        return mode != null ? mode : findMode("p3");
++    }
++
++    private DisplayMode findMode(String token) {
++        if (!mHardware.isSupported(LineageHardwareManager.FEATURE_DISPLAY_MODES)) {
++            return null;
++        }
++        DisplayMode[] modes = mHardware.getDisplayModes();
++        if (modes == null) {
++            return null;
++        }
++        for (DisplayMode mode : modes) {
++            if (mode.name != null && mode.name.toLowerCase(Locale.ROOT).contains(token)) {
++                return mode;
++            }
++        }
++        return null;
++    }
++
++    public boolean isCreatorMode() {
++        DisplayMode creator = getCreatorMode();
++        DisplayMode cur = mHardware.getCurrentDisplayMode();
++        if (cur == null) {
++            cur = mHardware.getDefaultDisplayMode();
++        }
++        return creator != null && cur != null && cur.id == creator.id;
++    }
++
++    public boolean setCreatorMode(boolean creator) {
++        DisplayMode mode = creator ? getCreatorMode() : getStandardMode();
++        return mode != null && mHardware.setDisplayMode(mode, true);
++    }
++
++    // ---------------------------------------------------------- white balance
++
++    public boolean hasWhiteBalance() {
++        return mLiveDisplay.getConfig().hasFeature(LiveDisplayManager.FEATURE_COLOR_ADJUSTMENT);
++    }
++
++    public String getPreset() {
++        return mPrefs.getString(KEY_PRESET, PRESET_MEDIUM);
++    }
++
++    public int getCustomTemperature() {
++        return mPrefs.getInt(KEY_TEMP, TEMP_D65);
++    }
++
++    public int getCustomRed() {
++        return mPrefs.getInt(KEY_RED, TINT_NEUTRAL);
++    }
++
++    public int getCustomGreen() {
++        return mPrefs.getInt(KEY_GREEN, TINT_NEUTRAL);
++    }
++
++    public void setPreset(String preset) {
++        mPrefs.edit().putString(KEY_PRESET, preset).apply();
++        apply();
++    }
++
++    public void setCustom(int temperature, int red, int green) {
++        mPrefs.edit()
++                .putString(KEY_PRESET, PRESET_CUSTOM)
++                .putInt(KEY_TEMP, clamp(temperature, TEMP_MIN, TEMP_MAX))
++                .putInt(KEY_RED, clamp(red, 0, TINT_MAX))
++                .putInt(KEY_GREEN, clamp(green, 0, TINT_MAX))
++                .apply();
++        apply();
++    }
++
++    /** Writes the RGB gains for the stored white balance to LiveDisplay. */
++    public void apply() {
++        if (!hasWhiteBalance()) {
++            return;
++        }
++        final String preset = getPreset();
++        final float[] rgb;
++        switch (preset) {
++            case PRESET_WARM:
++                rgb = gains(TEMP_WARM, TINT_NEUTRAL, TINT_NEUTRAL);
++                break;
++            case PRESET_COOL:
++                rgb = gains(TEMP_COOL, TINT_NEUTRAL, TINT_NEUTRAL);
++                break;
++            case PRESET_CUSTOM:
++                rgb = gains(getCustomTemperature(), getCustomRed(), getCustomGreen());
++                break;
++            default:
++                rgb = new float[] { 1.0f, 1.0f, 1.0f };
++                break;
++        }
++        mLiveDisplay.setColorAdjustment(rgb);
++    }
++
++    /**
++     * RGB gains for a colour temperature, normalised so D65 (6500K) is neutral, plus Sony-style
++     * red / green fine tuning (50 = neutral, about +-20% at the ends). Never exceeds 1.0.
++     */
++    static float[] gains(int kelvin, int red, int green) {
++        final double[] ref = kelvinToRgb(TEMP_D65);
++        final double[] c = kelvinToRgb(kelvin);
++        final double[] v = { c[0] / ref[0], c[1] / ref[1], c[2] / ref[2] };
++        v[0] *= 1.0 + (red - TINT_NEUTRAL) / 250.0;
++        v[1] *= 1.0 + (green - TINT_NEUTRAL) / 250.0;
++        final double max = Math.max(v[0], Math.max(v[1], v[2]));
++        return new float[] { (float) (v[0] / max), (float) (v[1] / max), (float) (v[2] / max) };
++    }
++
++    /** Tanner Helland's black-body approximation, 0..1 per channel. */
++    private static double[] kelvinToRgb(int kelvin) {
++        final double t = kelvin / 100.0;
++        final double r = t <= 66 ? 255 : 329.698727446 * Math.pow(t - 60, -0.1332047592);
++        final double g = t <= 66 ? 99.4708025861 * Math.log(t) - 161.1195681661
++                : 288.1221695283 * Math.pow(t - 60, -0.0755148492);
++        final double b = t >= 66 ? 255
++                : (t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307);
++        return new double[] { unit(r), unit(g), unit(b) };
++    }
++
++    private static double unit(double v) {
++        return Math.max(1, Math.min(255, v)) / 255.0;
++    }
++
++    private static int clamp(int v, int min, int max) {
++        return Math.max(min, Math.min(max, v));
++    }
++}
+diff --git a/src/org/lineageos/lineageparts/livedisplay/ImageQualitySettings.java b/src/org/lineageos/lineageparts/livedisplay/ImageQualitySettings.java
+new file mode 100644
+index 0000000..61eb8ca
+--- /dev/null
++++ b/src/org/lineageos/lineageparts/livedisplay/ImageQualitySettings.java
+@@ -0,0 +1,81 @@
++/*
++ * SPDX-FileCopyrightText: 2026 XZ1C project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package org.lineageos.lineageparts.livedisplay;
++
++import android.os.Bundle;
++
++import androidx.preference.CheckBoxPreference;
++import androidx.preference.Preference;
++
++import org.lineageos.lineageparts.R;
++import org.lineageos.lineageparts.SettingsPreferenceFragment;
++
++/** XZ1C: Sony-style "Image quality settings" (Creator / Standard mode, white balance). */
++public class ImageQualitySettings extends SettingsPreferenceFragment
++        implements Preference.OnPreferenceClickListener {
++
++    private static final String KEY_CREATOR = "image_quality_creator_mode";
++    private static final String KEY_STANDARD = "image_quality_standard_mode";
++    private static final String KEY_WHITE_BALANCE = "image_quality_white_balance";
++
++    private ImageQuality mImageQuality;
++    private CheckBoxPreference mCreator;
++    private CheckBoxPreference mStandard;
++    private Preference mWhiteBalance;
++
++    @Override
++    public void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        addPreferencesFromResource(R.xml.image_quality_settings);
++
++        mImageQuality = new ImageQuality(requireContext());
++        mCreator = findPreference(KEY_CREATOR);
++        mStandard = findPreference(KEY_STANDARD);
++        mWhiteBalance = findPreference(KEY_WHITE_BALANCE);
++
++        mCreator.setOnPreferenceClickListener(this);
++        mStandard.setOnPreferenceClickListener(this);
++
++        final boolean hasModes = mImageQuality.getCreatorMode() != null
++                && mImageQuality.getStandardMode() != null;
++        mCreator.setEnabled(hasModes);
++        mStandard.setEnabled(hasModes);
++        mWhiteBalance.setVisible(mImageQuality.hasWhiteBalance());
++    }
++
++    @Override
++    public void onResume() {
++        super.onResume();
++        updateState();
++    }
++
++    private void updateState() {
++        final boolean creator = mImageQuality.isCreatorMode();
++        mCreator.setChecked(creator);
++        mStandard.setChecked(!creator);
++        mWhiteBalance.setSummary(presetTitle(mImageQuality.getPreset()));
++    }
++
++    @Override
++    public boolean onPreferenceClick(Preference preference) {
++        mImageQuality.setCreatorMode(preference == mCreator);
++        updateState();
++        return true;
++    }
++
++    private int presetTitle(String preset) {
++        switch (preset) {
++            case ImageQuality.PRESET_WARM:
++                return R.string.white_balance_warm;
++            case ImageQuality.PRESET_COOL:
++                return R.string.white_balance_cool;
++            case ImageQuality.PRESET_CUSTOM:
++                return R.string.white_balance_custom;
++            default:
++                return R.string.white_balance_medium;
++        }
++    }
++}
+diff --git a/src/org/lineageos/lineageparts/livedisplay/LiveDisplaySettings.java b/src/org/lineageos/lineageparts/livedisplay/LiveDisplaySettings.java
+index 85b0923..d49fecb 100644
+--- a/src/org/lineageos/lineageparts/livedisplay/LiveDisplaySettings.java
++++ b/src/org/lineageos/lineageparts/livedisplay/LiveDisplaySettings.java
+@@ -241,6 +241,18 @@ public class LiveDisplaySettings extends SettingsPreferenceFragment implements S
+                 !mHardware.isSupported(LineageHardwareManager.FEATURE_ANTI_FLICKER)) {
+             liveDisplayPrefs.removePreference(antiFlicker);
+         }
++
++        // XZ1C: "Image quality settings" is the single colour entry; it owns the colour
++        // profile (Creator / Standard mode) and the base RGB (white balance). Hide the
++        // duplicates here so each setting has exactly one control.
++        Preference colorProfile = findPreference(KEY_LIVE_DISPLAY_COLOR_PROFILE);
++        if (colorProfile != null) {
++            colorProfile.setVisible(false);
++        }
++        Preference colorCalibration = findPreference(KEY_DISPLAY_COLOR);
++        if (colorCalibration != null) {
++            colorCalibration.setVisible(false);
++        }
+     }
+ 
+     @Override
+diff --git a/src/org/lineageos/lineageparts/livedisplay/WhiteBalanceSettings.java b/src/org/lineageos/lineageparts/livedisplay/WhiteBalanceSettings.java
+new file mode 100644
+index 0000000..97cc780
+--- /dev/null
++++ b/src/org/lineageos/lineageparts/livedisplay/WhiteBalanceSettings.java
+@@ -0,0 +1,144 @@
++/*
++ * SPDX-FileCopyrightText: 2026 XZ1C project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package org.lineageos.lineageparts.livedisplay;
++
++import android.os.Bundle;
++import android.widget.SeekBar;
++import android.widget.TextView;
++
++import androidx.preference.CheckBoxPreference;
++import androidx.preference.Preference;
++
++import com.android.settingslib.widget.LayoutPreference;
++
++import org.lineageos.lineageparts.R;
++import org.lineageos.lineageparts.SettingsPreferenceFragment;
++
++/** XZ1C: Sony-style white balance page (warm / medium / cool / custom). */
++public class WhiteBalanceSettings extends SettingsPreferenceFragment
++        implements Preference.OnPreferenceClickListener, SeekBar.OnSeekBarChangeListener {
++
++    private static final String KEY_INFO = "white_balance_info";
++    private static final String KEY_WARM = "white_balance_warm";
++    private static final String KEY_MEDIUM = "white_balance_medium";
++    private static final String KEY_COOL = "white_balance_cool";
++    private static final String KEY_CUSTOM = "white_balance_custom";
++    private static final String KEY_CUSTOM_SLIDERS = "white_balance_custom_sliders";
++
++    private static final int TEMP_STEP = 100;
++
++    private ImageQuality mImageQuality;
++    private Preference mInfo;
++    private CheckBoxPreference mWarm;
++    private CheckBoxPreference mMedium;
++    private CheckBoxPreference mCool;
++    private CheckBoxPreference mCustom;
++    private LayoutPreference mSliders;
++
++    private SeekBar mTemperature;
++    private SeekBar mRed;
++    private SeekBar mGreen;
++    private TextView mTemperatureValue;
++    private TextView mRedValue;
++    private TextView mGreenValue;
++
++    @Override
++    public void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        addPreferencesFromResource(R.xml.white_balance_settings);
++
++        mImageQuality = new ImageQuality(requireContext());
++        mInfo = findPreference(KEY_INFO);
++        mWarm = findPreference(KEY_WARM);
++        mMedium = findPreference(KEY_MEDIUM);
++        mCool = findPreference(KEY_COOL);
++        mCustom = findPreference(KEY_CUSTOM);
++        mSliders = findPreference(KEY_CUSTOM_SLIDERS);
++
++        for (CheckBoxPreference p : new CheckBoxPreference[] { mWarm, mMedium, mCool, mCustom }) {
++            p.setOnPreferenceClickListener(this);
++        }
++
++        mTemperature = mSliders.findViewById(R.id.wb_temperature);
++        mRed = mSliders.findViewById(R.id.wb_red);
++        mGreen = mSliders.findViewById(R.id.wb_green);
++        mTemperatureValue = mSliders.findViewById(R.id.wb_temperature_value);
++        mRedValue = mSliders.findViewById(R.id.wb_red_value);
++        mGreenValue = mSliders.findViewById(R.id.wb_green_value);
++
++        mTemperature.setMax((ImageQuality.TEMP_MAX - ImageQuality.TEMP_MIN) / TEMP_STEP);
++        mRed.setMax(ImageQuality.TINT_MAX);
++        mGreen.setMax(ImageQuality.TINT_MAX);
++        mTemperature.setProgress(
++                (mImageQuality.getCustomTemperature() - ImageQuality.TEMP_MIN) / TEMP_STEP);
++        mRed.setProgress(mImageQuality.getCustomRed());
++        mGreen.setProgress(mImageQuality.getCustomGreen());
++        mTemperature.setOnSeekBarChangeListener(this);
++        mRed.setOnSeekBarChangeListener(this);
++        mGreen.setOnSeekBarChangeListener(this);
++        updateSliderLabels();
++    }
++
++    @Override
++    public void onResume() {
++        super.onResume();
++        updateState();
++    }
++
++    private void updateState() {
++        final String preset = mImageQuality.getPreset();
++        mWarm.setChecked(ImageQuality.PRESET_WARM.equals(preset));
++        mCool.setChecked(ImageQuality.PRESET_COOL.equals(preset));
++        mCustom.setChecked(ImageQuality.PRESET_CUSTOM.equals(preset));
++        mMedium.setChecked(!mWarm.isChecked() && !mCool.isChecked() && !mCustom.isChecked());
++        mSliders.setVisible(mCustom.isChecked());
++        mInfo.setSummary(getString(R.string.white_balance_current_mode, getString(
++                mImageQuality.isCreatorMode() ? R.string.image_quality_creator_mode_title
++                        : R.string.image_quality_standard_mode_title)));
++    }
++
++    @Override
++    public boolean onPreferenceClick(Preference preference) {
++        if (preference == mCustom) {
++            applyCustom();
++        } else {
++            mImageQuality.setPreset(preference == mWarm ? ImageQuality.PRESET_WARM
++                    : preference == mCool ? ImageQuality.PRESET_COOL
++                    : ImageQuality.PRESET_MEDIUM);
++        }
++        updateState();
++        return true;
++    }
++
++    private void applyCustom() {
++        mImageQuality.setCustom(
++                ImageQuality.TEMP_MIN + mTemperature.getProgress() * TEMP_STEP,
++                mRed.getProgress(), mGreen.getProgress());
++    }
++
++    private void updateSliderLabels() {
++        final int kelvin = ImageQuality.TEMP_MIN + mTemperature.getProgress() * TEMP_STEP;
++        mTemperatureValue.setText(getString(R.string.white_balance_temperature_value, kelvin));
++        mRedValue.setText(String.valueOf(mRed.getProgress()));
++        mGreenValue.setText(String.valueOf(mGreen.getProgress()));
++    }
++
++    @Override
++    public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
++        updateSliderLabels();
++        if (fromUser) {
++            applyCustom();
++        }
++    }
++
++    @Override
++    public void onStartTrackingTouch(SeekBar seekBar) {
++    }
++
++    @Override
++    public void onStopTrackingTouch(SeekBar seekBar) {
++    }
++}
+-- 
+2.43.0
+

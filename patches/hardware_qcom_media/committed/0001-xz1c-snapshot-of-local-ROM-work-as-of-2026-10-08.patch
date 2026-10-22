@@ -1,0 +1,28 @@
+From deb4a564861db1610d908f1e4db08663dfe6eeb3 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:12 +0800
+Subject: [PATCH] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I62c1d158e16c96fca9ba51dbb5ae45912c7bdcff
+---
+ Android.bp | 5 +++++
+ 1 file changed, 5 insertions(+)
+ create mode 100644 Android.bp
+
+diff --git a/Android.bp b/Android.bp
+new file mode 100644
+index 000000000..966d930bf
+--- /dev/null
++++ b/Android.bp
+@@ -0,0 +1,5 @@
++soong_namespace {
++    imports: [
++        "hardware/qcom-caf/msm8998",
++    ],
++}
+-- 
+2.43.0
+

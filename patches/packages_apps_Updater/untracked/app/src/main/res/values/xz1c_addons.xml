@@ -1,0 +1,39 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="addon_sony_apps">"Sony apps"</string>
+    <string name="addon_google_apps">"Google apps"</string>
+    <string name="addon_section_title">"Add-on apps"</string>
+    <string name="addon_view_contents">"View contents"</string>
+    <string name="addon_uninstall">"Uninstall"</string>
+    <string name="addon_uninstall_package">"Uninstall this package"</string>
+    <string name="addon_install_action">"Install"</string>
+    <string name="addon_state_installed">"Installed"</string>
+    <string name="addon_state_missing">"Not installed"</string>
+    <string name="addon_remove_pending">"Removal pending · Restart required"</string>
+    <string name="addon_cancel_remove">"Cancel removal"</string>
+    <string name="addon_sony_summary">"Sony apps installed separately from the base system."</string>
+    <string name="addon_google_summary">"Google Play Store and Google services."</string>
+    <string name="addon_back">"Back"</string>
+    <string name="addon_app_version">"Version %1$s"</string>
+    <string name="addon_inventory_failed">"Could not read the package contents."</string>
+    <string name="addon_update_policy">"Kept during system updates"</string>
+    <string name="addon_update_policy_note">"Installed add-ons are kept during ROM updates. Uninstalled add-ons will not be restored."</string>
+    <string name="addon_remove_title">"Uninstall %1$s?"</string>
+    <string name="addon_remove_sony_note">"Remove this Sony add-on and restore the base system apps it replaced. Other apps and personal files are not included."</string>
+    <string name="addon_remove_google_note">"Google sign-in, Play Store and Google push notifications may stop working in apps that depend on them. Other apps and personal files are not included."</string>
+    <string name="addon_remove_data">"Also delete data for these apps"</string>
+    <string name="addon_remove_data_note">"App data is kept unless this is checked. Deleting data cannot be undone."</string>
+    <string name="addon_remove_restart_note">"Confirm to schedule removal, then restart to apply. You can cancel before applying."</string>
+    <string name="addon_remove_apply">"Restart and apply"</string>
+    <string name="addon_remove_ready">"The uninstall package is verified. Restart to remove the selected add-ons. If you chose to delete app data, it will be cleared before restarting."</string>
+    <string name="addon_remove_unavailable">"No verified uninstall package is available for this ROM version. Nothing has been removed."</string>
+    <string name="addon_remove_busy">"Finish or cancel the current add-on operation first."</string>
+    <string name="addon_remove_failed">"Removal did not complete. The selected add-ons are still pending. Details: %1$s"</string>
+    <string name="addon_remove_data_failed">"Could not clear data for %1$s. Removal was not started."</string>
+    <string name="addon_remove_success">"The selected add-ons have been uninstalled."</string>
+    <string name="addon_remove_request_failed">"Could not prepare the removal request. No system files were removed."</string>
+    <plurals name="addon_contents_count">
+        <item quantity="one">%d included app</item>
+        <item quantity="other">%d included apps</item>
+    </plurals>
+</resources>

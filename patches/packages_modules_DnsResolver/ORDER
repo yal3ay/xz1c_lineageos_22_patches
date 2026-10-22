@@ -1,0 +1,4 @@
+0001-Add-configurable-strict-encrypted-DNS-transports.patch
+0002-Document-VPN-resolver-precedence.patch
+0003-xz1c-engine-pool-DoT-connections-and-retry-closed-id.patch
+0004-xz1c-engine-redial-idle-or-silently-dead-DoQ-connect.patch

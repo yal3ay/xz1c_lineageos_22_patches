@@ -1,0 +1,78 @@
+diff --git a/libprocessgroup/profiles/cgroups.json b/libprocessgroup/profiles/cgroups.json
+index 3e4393df2..e09a84298 100644
+--- a/libprocessgroup/profiles/cgroups.json
++++ b/libprocessgroup/profiles/cgroups.json
+@@ -21,6 +21,14 @@
+       "UID": "system",
+       "GID": "system"
+     },
++    {
++      "Controller": "freezer",
++      "Path": "/dev/freezer",
++      "Mode": "0755",
++      "UID": "system",
++      "GID": "system",
++      "Optional": true
++    },
+     {
+       "Controller": "memory",
+       "Path": "/dev/memcg",
+@@ -36,10 +44,6 @@
+     "UID": "system",
+     "GID": "system",
+     "Controllers": [
+-      {
+-        "Controller": "freezer",
+-        "Path": "."
+-      }
+     ]
+   }
+ }
+diff --git a/libprocessgroup/profiles/cgroups_28.json b/libprocessgroup/profiles/cgroups_28.json
+index 17d492949..e235c2d3f 100644
+--- a/libprocessgroup/profiles/cgroups_28.json
++++ b/libprocessgroup/profiles/cgroups_28.json
+@@ -6,6 +6,14 @@
+       "Mode": "0755",
+       "UID": "system",
+       "GID": "system"
++    },
++    {
++      "Controller": "freezer",
++      "Path": "/dev/freezer",
++      "Mode": "0755",
++      "UID": "system",
++      "GID": "system",
++      "Optional": true
+     }
+   ]
+ }
+diff --git a/rootdir/init.rc b/rootdir/init.rc
+index 0cc129707..8efc8bd78 100644
+--- a/rootdir/init.rc
++++ b/rootdir/init.rc
+@@ -147,6 +147,24 @@ on init
+     chmod 0664 /dev/stune/top-app/cgroup.procs
+     chmod 0664 /dev/stune/rt/cgroup.procs
+ 
++    # Create cgroup v1 freezer nodes for Smart App Freezing
++    mkdir /dev/freezer 0755 system system
++    mount cgroup none /dev/freezer nodev noexec nosuid freezer
++    mkdir /dev/freezer/frozen 0755 system system
++    write /dev/freezer/frozen/freezer.state FROZEN
++    chown system system /dev/freezer
++    chown system system /dev/freezer/frozen
++    chown system system /dev/freezer/tasks
++    chown system system /dev/freezer/cgroup.procs
++    chown system system /dev/freezer/frozen/tasks
++    chown system system /dev/freezer/frozen/cgroup.procs
++    chown system system /dev/freezer/frozen/freezer.state
++    chmod 0664 /dev/freezer/tasks
++    chmod 0664 /dev/freezer/cgroup.procs
++    chmod 0664 /dev/freezer/frozen/tasks
++    chmod 0664 /dev/freezer/frozen/cgroup.procs
++    chmod 0664 /dev/freezer/frozen/freezer.state
++
+     # cpuctl hierarchy for devices using utilclamp
+     mkdir /dev/cpuctl/foreground
+     mkdir /dev/cpuctl/foreground_window

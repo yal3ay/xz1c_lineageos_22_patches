@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="xz1c_updates_title">システムアップデート</string>
+    <string name="xz1c_check_updates">アップデートを確認</string>
+    <string name="xz1c_device_name">Xperia XZ1 Compact</string>
+    <string name="xz1c_addon_contents_title">アドオンの内容</string>
+    <string name="xz1c_addon_sony_detail">Sony 純正アプリ。基本システムとは別にインストールされます。</string>
+    <string name="xz1c_addon_google_detail">Google ストアとサービス。基本システムとは別にインストールされます。</string>
+    <string name="xz1c_addon_included">含まれるアプリ</string>
+    <string name="xz1c_addon_policy_short">ROM を更新しても、インストール済みのアドオンは残ります。</string>
+    <string name="xz1c_addon_remove_footnote">このアドオンだけを削除します。端末は初期化されません。</string>
+    <plurals name="xz1c_addon_app_count">
+        <item quantity="other">%d 個</item>
+    </plurals>
+</resources>

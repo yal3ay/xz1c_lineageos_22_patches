@@ -1,0 +1,170 @@
+{
+  "sony": {
+    "source": "XZ1C-SonyApps-20261012.zip",
+    "sha256": "a12357509f50e6f331e938bf624fa0113db155144011b8bb046693282328b467",
+    "apps": [
+      {
+        "package": "com.sonymobile.camera.addon.permission",
+        "label": "Xperia™ camera add-ons",
+        "version": "1.5.A.0.0",
+        "path": "system/app/CameraAddonPermission-release/CameraAddonPermission-release.apk"
+      },
+      {
+        "package": "com.sonymobile.cameracommon.permission",
+        "label": "com.sonymobile.cameracommon.permission",
+        "version": "1.5.A.0.0",
+        "path": "system/app/CameraCommonPermission-release/CameraCommonPermission-release.apk"
+      },
+      {
+        "package": "com.sonyericsson.cameraextension.permission",
+        "label": "com.sonyericsson.cameraextension.permission",
+        "version": "1.5.A.0.0",
+        "path": "system/app/CameraExtensionPermission-release/CameraExtensionPermission-release.apk"
+      },
+      {
+        "package": "com.sonymobile.imageprocessor.permission",
+        "label": "com.sonymobile.imageprocessor.permission",
+        "version": "1.5.A.0.0",
+        "path": "system/app/ImageProcessorPermission-release/ImageProcessorPermission-release.apk"
+      },
+      {
+        "package": "com.sonyericsson.album",
+        "label": "Album",
+        "version": "9.9.A.0.20",
+        "path": "system/app/SonyAlbum-release/SonyAlbum-release.apk"
+      },
+      {
+        "package": "com.sonymobile.calendar",
+        "label": "Calendar",
+        "version": "20.4.C.3.6",
+        "path": "system/app/SonyCalendar-release/SonyCalendar-release.apk"
+      },
+      {
+        "package": "com.sonyericsson.music",
+        "label": "Music",
+        "version": "9.4.17.A.0.11",
+        "path": "system/app/SonyMusic-release/SonyMusic-release.apk"
+      },
+      {
+        "package": "com.sonymobile.scan3d",
+        "label": "3D Creator",
+        "version": "3.0.A.0.36",
+        "path": "system/app/app-scan3d-release/app-scan3d-release.apk"
+      },
+      {
+        "package": "com.sonyericsson.android.camera3d",
+        "label": "Panorama",
+        "version": "15",
+        "path": "system/priv-app/CameraPanorama-release/CameraPanorama-release.apk"
+      },
+      {
+        "package": "com.sonyericsson.android.camera",
+        "label": "Camera",
+        "version": "2.2.2.A.0.15",
+        "path": "system/priv-app/SemcCameraUI-xxhdpi-release/SemcCameraUI-xxhdpi-release.apk"
+      },
+      {
+        "package": "com.sonymobile.moviecreator",
+        "label": "Video Editor",
+        "version": "2.7.A.0.10",
+        "path": "system/priv-app/SomcMovieCreator-release/SomcMovieCreator-release.apk"
+      }
+    ]
+  },
+  "gapps": {
+    "source": "MindTheGapps-15-arm64-XZ1C-signed.zip",
+    "sha256": "868a8c93cdb44a23ea3bbd668b8d270942f07950934de90634cfa17555020fce",
+    "apps": [
+      {
+        "package": "com.google.android.syncadapters.calendar",
+        "label": "Google Calendar Sync",
+        "version": "2024.14.0-622676295-release",
+        "path": "system/product/app/GoogleCalendarSyncAdapter/GoogleCalendarSyncAdapter.apk"
+      },
+      {
+        "package": "com.google.android.syncadapters.contacts",
+        "label": "Google Contacts Sync",
+        "version": "12-7567768",
+        "path": "system/product/app/GoogleContactsSyncAdapter/GoogleContactsSyncAdapter.apk"
+      },
+      {
+        "package": "com.google.android.markup",
+        "label": "Markup",
+        "version": "1.0",
+        "path": "system/product/app/MarkupGoogle_v2/MarkupGoogle_v2.apk"
+      },
+      {
+        "package": "com.google.android.gm.exchange",
+        "label": "Exchange Services",
+        "version": "6.4.123892212.release",
+        "path": "system/product/app/PrebuiltExchange3Google/PrebuiltExchange3Google.apk"
+      },
+      {
+        "package": "com.google.android.tts",
+        "label": "Speech Recognition and Synthesis from Google",
+        "version": "googletts.google-speech-apk_20240513.02_p2.634461351",
+        "path": "system/product/app/SpeechServicesByGoogle/SpeechServicesByGoogle.apk"
+      },
+      {
+        "package": "com.google.android.marvin.talkback",
+        "label": "Android Accessibility Suite",
+        "version": "14.2.0.620729047",
+        "path": "system/product/app/talkback/talkback.apk"
+      },
+      {
+        "package": "com.mtg.gmsoverlay",
+        "label": "com.mtg.gmsoverlay",
+        "version": "1.0",
+        "path": "system/product/overlay/GmsOverlay.apk"
+      },
+      {
+        "package": "com.mtg.gmssettingsoverlay",
+        "label": "com.mtg.gmssettingsoverlay",
+        "version": "1.0",
+        "path": "system/product/overlay/GmsSettingsOverlay.apk"
+      },
+      {
+        "package": "com.mtg.gmssettingsprovideroverlay",
+        "label": "com.mtg.gmssettingsprovideroverlay",
+        "version": "1.0",
+        "path": "system/product/overlay/GmsSettingsProviderOverlay.apk"
+      },
+      {
+        "package": "com.google.android.projection.gearhead",
+        "label": "Android Auto",
+        "version": "1.2.543610-stub",
+        "path": "system/product/priv-app/AndroidAutoStub/AndroidAutoStub.apk"
+      },
+      {
+        "package": "com.google.android.gms",
+        "label": "com.google.android.gms",
+        "version": "24.28.35 (260400-657754416)",
+        "path": "system/product/priv-app/GmsCore/GmsCore.apk"
+      },
+      {
+        "package": "com.google.android.partnersetup",
+        "label": "Google Partner Setup",
+        "version": "100.642292252",
+        "path": "system/product/priv-app/GooglePartnerSetup/GooglePartnerSetup.apk"
+      },
+      {
+        "package": "com.android.vending",
+        "label": "Google Play Store",
+        "version": "41.9.17-31 [0] [PR] 652617032",
+        "path": "system/product/priv-app/Phonesky/Phonesky.apk"
+      },
+      {
+        "package": "com.google.android.apps.wellbeing",
+        "label": "Digital Wellbeing",
+        "version": "1.6.569650261 (550467)",
+        "path": "system/product/priv-app/Wellbeing/Wellbeing.apk"
+      },
+      {
+        "package": "com.google.android.gsf",
+        "label": "Google Services Framework",
+        "version": "15-12154782",
+        "path": "system/system_ext/priv-app/GoogleServicesFramework/GoogleServicesFramework.apk"
+      }
+    ]
+  }
+}

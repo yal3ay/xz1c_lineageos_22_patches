@@ -1,0 +1,80 @@
+From 3a1c932139c5c19fd5443407ef169f93b34ac6f8 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Sun, 4 Oct 2026 16:11:37 +0800
+Subject: [PATCH 2/2] Prefer tunnel DNS while VPN is connected
+
+Change-Id: I01bf82b18a965bf96650e8915ce6883bb02bd20d
+---
+ .../android/server/ConnectivityService.java   |  5 +++
+ .../server/ConnectivityServiceTest.java       | 32 +++++++++++++++++++
+ 2 files changed, 37 insertions(+)
+
+diff --git a/service/src/com/android/server/ConnectivityService.java b/service/src/com/android/server/ConnectivityService.java
+index b7c1748222..54f06721a2 100644
+--- a/service/src/com/android/server/ConnectivityService.java
++++ b/service/src/com/android/server/ConnectivityService.java
+@@ -5638,6 +5638,9 @@ public class ConnectivityService extends IConnectivityManager.Stub
+     }
+ 
+     private void handlePerNetworkPrivateDnsConfig(NetworkAgentInfo nai, PrivateDnsConfig cfg) {
++        // A VPN owns its DNS policy. Keep the user's private DNS setting for physical
++        // networks, but do not replace the resolver advertised by the tunnel.
++        if (nai.isVPN()) cfg = new PrivateDnsConfig(false);
+         // Private DNS only ever applies to networks that might provide
+         // Internet access and therefore also require validation.
+         if (!networkRequiresPrivateDnsValidation(nai)) return;
+@@ -5654,6 +5657,8 @@ public class ConnectivityService extends IConnectivityManager.Stub
+     }
+ 
+     private void updatePrivateDns(NetworkAgentInfo nai, PrivateDnsConfig newCfg) {
++        // Also reject a late hostname-resolution result from an earlier private DNS probe.
++        if (nai.isVPN()) newCfg = new PrivateDnsConfig(false);
+         mDnsManager.updatePrivateDns(nai.network, newCfg);
+         updateDnses(nai.linkProperties, null, nai.network.getNetId());
+     }
+diff --git a/tests/unit/java/com/android/server/ConnectivityServiceTest.java b/tests/unit/java/com/android/server/ConnectivityServiceTest.java
+index f7d7c87882..d804ccdca3 100755
+--- a/tests/unit/java/com/android/server/ConnectivityServiceTest.java
++++ b/tests/unit/java/com/android/server/ConnectivityServiceTest.java
+@@ -8460,6 +8460,38 @@ public class ConnectivityServiceTest {
+         assertEquals("strict.example.com", cbi.getLp().getPrivateDnsServerName());
+     }
+ 
++    @Test
++    public void testVpnKeepsTunnelDnsWhenPrivateDnsIsStrict() throws Exception {
++        setPrivateDnsSettings(PRIVATE_DNS_MODE_PROVIDER_HOSTNAME, "dns.alidns.com");
++        final LinkProperties lp = new LinkProperties();
++        lp.setInterfaceName(VPN_IFNAME);
++        lp.addLinkAddress(new LinkAddress("172.16.66.2/32"));
++        lp.addRoute(new RouteInfo(new IpPrefix(Inet4Address.ANY, 0), null, VPN_IFNAME));
++        lp.addDnsServer(InetAddress.getByName("172.16.66.1"));
++        mMockVpn.setOwnerAndAdminUid(VPN_UID);
++        mMockVpn.registerAgent(false, Collections.singleton(PRIMARY_UIDRANGE), lp);
++        mMockVpn.connect(true /* validated */, true /* hasInternet */,
++                false /* privateDnsProbeSent */);
++        waitForIdle();
++
++        verify(mMockDnsResolver, atLeastOnce()).setResolverConfiguration(
++                mResolverParamsParcelCaptor.capture());
++        final int netId = mMockVpn.getNetwork().netId;
++        boolean foundVpn = false;
++        for (ResolverParamsParcel params : mResolverParamsParcelCaptor.getAllValues()) {
++            if (params.netId != netId) continue;
++            foundVpn = true;
++            assertEquals(asList("172.16.66.1"), asList(params.servers));
++            assertEquals("", params.tlsName);
++            assertEquals(0, params.tlsServers.length);
++            assertNull(params.dohParams);
++        }
++        assertTrue(foundVpn);
++        // The per-network override must leave the saved physical-network preference intact.
++        assertEquals(PRIVATE_DNS_MODE_PROVIDER_HOSTNAME,
++                ConnectivitySettingsManager.getPrivateDnsMode(mServiceContext));
++    }
++
+     private PrivateDnsValidationEventParcel makePrivateDnsValidationEvent(
+             final int netId, final String ipAddress, final String hostname, final int validation) {
+         final PrivateDnsValidationEventParcel event = new PrivateDnsValidationEventParcel();
+-- 
+2.43.0
+

@@ -1,0 +1,390 @@
+From a8a52b69b28006ae85125f1353f133d77d26d7d1 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:29 +0800
+Subject: [PATCH 1/2] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: Iae2edd3a602b9b157a615d9d8ff6f28557ba8b8c
+---
+ .../health/ChargingControlNotification.java   |   5 +
+ .../health/HealthInterfaceService.java        |  31 +++-
+ lineage/res/res/values/config.xml             |  14 ++
+ lineage/res/res/values/symbols.xml            |   3 +
+ .../lineageos/providers/LineageSettings.java  | 134 ++++++++++++++++++
+ .../notification/LineageBatteryLights.java    |   6 +-
+ .../internal/util/DeviceKeysConstants.java    |   3 +-
+ 7 files changed, 187 insertions(+), 9 deletions(-)
+
+diff --git a/lineage/lib/main/java/org/lineageos/platform/internal/health/ChargingControlNotification.java b/lineage/lib/main/java/org/lineageos/platform/internal/health/ChargingControlNotification.java
+index 50a07322..2ce9b208 100644
+--- a/lineage/lib/main/java/org/lineageos/platform/internal/health/ChargingControlNotification.java
++++ b/lineage/lib/main/java/org/lineageos/platform/internal/health/ChargingControlNotification.java
+@@ -185,6 +185,11 @@ public class ChargingControlNotification {
+     }
+ 
+     private void createNotificationChannelIfNeeded() {
++        // 清理 r14 里临时建过的 IMPORTANCE_MIN channel（那版曾把状态栏图标挪到电池右侧，
++        // 后来按用户要求撤回，图标回到左侧通知区）。不清的话设置里会残留一个空 channel。
++        if (mNotificationManager.getNotificationChannel("LineageHealthChargingControlMin") != null) {
++            mNotificationManager.deleteNotificationChannel("LineageHealthChargingControlMin");
++        }
+         String id = CHARGING_CONTROL_CHANNEL_ID;
+         NotificationChannel channel = mNotificationManager.getNotificationChannel(id);
+         if (channel != null) {
+diff --git a/lineage/lib/main/java/org/lineageos/platform/internal/health/HealthInterfaceService.java b/lineage/lib/main/java/org/lineageos/platform/internal/health/HealthInterfaceService.java
+index 0431c3eb..927c5c7d 100644
+--- a/lineage/lib/main/java/org/lineageos/platform/internal/health/HealthInterfaceService.java
++++ b/lineage/lib/main/java/org/lineageos/platform/internal/health/HealthInterfaceService.java
+@@ -7,6 +7,7 @@ package org.lineageos.platform.internal.health;
+ 
+ import android.Manifest;
+ import android.content.Context;
++import android.os.Binder;
+ import android.os.Handler;
+ import android.os.IBinder;
+ import android.os.Process;
+@@ -25,6 +26,7 @@ import java.io.FileDescriptor;
+ import java.io.PrintWriter;
+ import java.util.ArrayList;
+ import java.util.List;
++import java.util.function.BooleanSupplier;
+ 
+ public class HealthInterfaceService extends LineageSystemService {
+ 
+@@ -92,6 +94,21 @@ public class HealthInterfaceService extends LineageSystemService {
+         }
+     }
+ 
++    /**
++     * Binder calls arrive with the caller's UID. Charging control writes through
++     * the system-server "android" context, so retaining a remote app's identity
++     * makes the settings provider reject the package/UID pair. Run mutations as
++     * system_server and always restore the original identity afterwards.
++     */
++    private boolean runAsSystem(BooleanSupplier operation) {
++        final long token = Binder.clearCallingIdentity();
++        try {
++            return operation.getAsBoolean();
++        } finally {
++            Binder.restoreCallingIdentity(token);
++        }
++    }
++
+     /* Service */
+     private final IBinder mService = new IHealthInterface.Stub() {
+         @Override
+@@ -106,7 +123,7 @@ public class HealthInterfaceService extends LineageSystemService {
+ 
+         @Override
+         public boolean setChargingControlEnabled(boolean enabled) {
+-            return mCCC.setEnabled(enabled);
++            return runAsSystem(() -> mCCC.setEnabled(enabled));
+         }
+ 
+         @Override
+@@ -116,7 +133,7 @@ public class HealthInterfaceService extends LineageSystemService {
+ 
+         @Override
+         public boolean setChargingControlMode(int mode) {
+-            return mCCC.setMode(mode);
++            return runAsSystem(() -> mCCC.setMode(mode));
+         }
+ 
+         @Override
+@@ -126,7 +143,7 @@ public class HealthInterfaceService extends LineageSystemService {
+ 
+         @Override
+         public boolean setChargingControlStartTime(int startTime) {
+-            return mCCC.setStartTime(startTime);
++            return runAsSystem(() -> mCCC.setStartTime(startTime));
+         }
+ 
+         @Override
+@@ -136,7 +153,7 @@ public class HealthInterfaceService extends LineageSystemService {
+ 
+         @Override
+         public boolean setChargingControlTargetTime(int targetTime) {
+-            return mCCC.setTargetTime(targetTime);
++            return runAsSystem(() -> mCCC.setTargetTime(targetTime));
+         }
+ 
+         @Override
+@@ -146,12 +163,12 @@ public class HealthInterfaceService extends LineageSystemService {
+ 
+         @Override
+         public boolean setChargingControlLimit(int limit) {
+-            return mCCC.setLimit(limit);
++            return runAsSystem(() -> mCCC.setLimit(limit));
+         }
+ 
+         @Override
+         public boolean resetChargingControl() {
+-            return mCCC.reset();
++            return runAsSystem(() -> mCCC.reset());
+         }
+ 
+         @Override
+@@ -178,7 +195,7 @@ public class HealthInterfaceService extends LineageSystemService {
+ 
+         @Override
+         public boolean setFastChargeMode(int mode) {
+-            return mFCC.setFastChargeMode(mode);
++            return runAsSystem(() -> mFCC.setFastChargeMode(mode));
+         }
+ 
+         @Override
+diff --git a/lineage/res/res/values/config.xml b/lineage/res/res/values/config.xml
+index 46c12131..83567b9e 100644
+--- a/lineage/res/res/values/config.xml
++++ b/lineage/res/res/values/config.xml
+@@ -197,6 +197,20 @@
+     -->
+     <integer name="config_doubleTapOnHomeBehavior">0</integer>
+ 
++    <!-- Control the behavior when the user short-presses the camera button.
++         Default 0 (nothing) so the key keeps working as a shutter button.
++         See config_longPressOnHomeBehavior for valid values. -->
++    <integer name="config_shortPressOnCameraBehavior">0</integer>
++
++    <!-- Control the behavior when the user long-presses the camera button.
++         Default 6 (launch camera), matching the legacy camera_launch toggle.
++         See config_longPressOnHomeBehavior for valid values. -->
++    <integer name="config_longPressOnCameraBehavior">6</integer>
++
++    <!-- Control the behavior when the user double-taps the camera button.
++         See config_longPressOnHomeBehavior for valid values. -->
++    <integer name="config_doubleTapOnCameraBehavior">0</integer>
++
+     <!-- Control the behavior when the user long presses the menu button.
+             0 - Nothing
+             1 - Menu key
+diff --git a/lineage/res/res/values/symbols.xml b/lineage/res/res/values/symbols.xml
+index 99427a37..34a20e8a 100644
+--- a/lineage/res/res/values/symbols.xml
++++ b/lineage/res/res/values/symbols.xml
+@@ -87,6 +87,9 @@
+     <java-symbol type="integer" name="config_longPressOnBackBehavior" />
+     <java-symbol type="integer" name="config_longPressOnHomeBehavior" />
+     <java-symbol type="integer" name="config_doubleTapOnHomeBehavior" />
++    <java-symbol type="integer" name="config_shortPressOnCameraBehavior" />
++    <java-symbol type="integer" name="config_longPressOnCameraBehavior" />
++    <java-symbol type="integer" name="config_doubleTapOnCameraBehavior" />
+     <java-symbol type="integer" name="config_longPressOnMenuBehavior" />
+     <java-symbol type="integer" name="config_longPressOnAppSwitchBehavior" />
+ 
+diff --git a/sdk/src/java/lineageos/providers/LineageSettings.java b/sdk/src/java/lineageos/providers/LineageSettings.java
+index 9fe5cb41..2425ed84 100644
+--- a/sdk/src/java/lineageos/providers/LineageSettings.java
++++ b/sdk/src/java/lineageos/providers/LineageSettings.java
+@@ -376,6 +376,15 @@ public final class LineageSettings {
+     private static final Validator sHardwareKeyActionvalidator =
+             new InclusiveIntegerRangeValidator(0, 11);
+ 
++    /**
++     * Camera key actions additionally allow LAUNCH_APP (ordinal 12), which the navigation
++     * keys do not: only the camera key has an accompanying *_PACKAGE setting naming the app
++     * to start, so LAUNCH_APP would be a no-op anywhere else.
++     * Keep the upper bound in step with DeviceKeysConstants.Action.
++     */
++    private static final Validator sCameraKeyActionValidator =
++            new InclusiveIntegerRangeValidator(0, 12);
++
+     private static final Validator sAlwaysTrueValidator = new Validator() {
+         @Override
+         public boolean validate(String value) {
+@@ -1297,6 +1306,73 @@ public final class LineageSettings {
+         /** @hide */
+         public static final Validator CAMERA_LAUNCH_VALIDATOR =
+                 sBooleanValidator;
++        /**
++         * Action to perform when the camera key is short-pressed.
++         * (Default can be configured via config_shortPressOnCameraBehavior)
++         * (See KEY_HOME_LONG_PRESS_ACTION for valid values)
++         */
++        public static final String KEY_CAMERA_ACTION = "key_camera_action";
++
++        /** @hide */
++        public static final Validator KEY_CAMERA_ACTION_VALIDATOR =
++                sCameraKeyActionValidator;
++
++        /**
++         * Action to perform when the camera key is long-pressed.
++         * (Default can be configured via config_longPressOnCameraBehavior)
++         * (See KEY_HOME_LONG_PRESS_ACTION for valid values)
++         */
++        public static final String KEY_CAMERA_LONG_PRESS_ACTION =
++                "key_camera_long_press_action";
++
++        /** @hide */
++        public static final Validator KEY_CAMERA_LONG_PRESS_ACTION_VALIDATOR =
++                sCameraKeyActionValidator;
++
++        /**
++         * Action to perform when the camera key is double-tapped.
++         * (Default can be configured via config_doubleTapOnCameraBehavior)
++         * (See KEY_HOME_LONG_PRESS_ACTION for valid values)
++         */
++        public static final String KEY_CAMERA_DOUBLE_TAP_ACTION =
++                "key_camera_double_tap_action";
++
++        /** @hide */
++        public static final Validator KEY_CAMERA_DOUBLE_TAP_ACTION_VALIDATOR =
++                sCameraKeyActionValidator;
++
++        /**
++         * Package to launch when the camera key is short-pressed and its action is
++         * LAUNCH_APP. Ignored for every other action.
++         */
++        public static final String KEY_CAMERA_ACTION_PACKAGE =
++                "key_camera_action_package";
++
++        /** @hide */
++        public static final Validator KEY_CAMERA_ACTION_PACKAGE_VALIDATOR =
++                sNonNullStringValidator;
++
++        /**
++         * Package to launch when the camera key is long-pressed and its action is
++         * LAUNCH_APP. Ignored for every other action.
++         */
++        public static final String KEY_CAMERA_LONG_PRESS_ACTION_PACKAGE =
++                "key_camera_long_press_action_package";
++
++        /** @hide */
++        public static final Validator KEY_CAMERA_LONG_PRESS_ACTION_PACKAGE_VALIDATOR =
++                sNonNullStringValidator;
++
++        /**
++         * Package to launch when the camera key is double-tapped and its action is
++         * LAUNCH_APP. Ignored for every other action.
++         */
++        public static final String KEY_CAMERA_DOUBLE_TAP_ACTION_PACKAGE =
++                "key_camera_double_tap_action_package";
++
++        /** @hide */
++        public static final Validator KEY_CAMERA_DOUBLE_TAP_ACTION_PACKAGE_VALIDATOR =
++                sNonNullStringValidator;
+ 
+         /**
+          * Show icon when stylus is used
+@@ -1633,6 +1709,49 @@ public final class LineageSettings {
+         public static final Validator DOUBLE_TAP_SLEEP_GESTURE_VALIDATOR =
+                 sBooleanValidator;
+ 
++        /**
++         * 划掉最近任务时，是否把该应用强制停止（置为停止状态，不再被自启动拉起）。
++         * 0 = 关（AOSP 原行为：只杀进程，应用随时会被拉回来），1 = 开
++         */
++        public static final String SWIPE_AWAY_FORCE_STOP = "swipe_away_force_stop";
++
++        /** @hide */
++        public static final Validator SWIPE_AWAY_FORCE_STOP_VALIDATOR =
++                sBooleanValidator;
++
++        /**
++         * 应用进入后台超过多少分钟后自动强制停止（置为停止状态，不再被自启动拉回）。
++         * 0 = 关闭。只靠「划掉即退出」管不到按 Home 键离开或直接切走的应用，这条补上。
++         */
++        public static final String BG_FORCE_STOP_TIMEOUT = "bg_force_stop_timeout";
++
++        /** @hide */
++        public static final Validator BG_FORCE_STOP_TIMEOUT_VALIDATOR =
++                new InclusiveIntegerRangeValidator(0, 720);
++
++        /**
++         * 后台超时后的处理方式。
++         * 0 = 强制停止（置停止状态，不再被任何方式拉起，包括 FCM 推送）
++         * 1 = 只杀进程（不置停止状态，FCM 推送仍能把它唤醒，适合即时通讯）
++         */
++        public static final String BG_FORCE_STOP_MODE = "bg_force_stop_mode";
++
++        /** @hide */
++        public static final Validator BG_FORCE_STOP_MODE_VALIDATOR =
++                new InclusiveIntegerRangeValidator(0, 1);
++
++        /**
++         * 是否顺带清理「无限制」应用的闲置(CACHED)进程。
++         * 典型用途：微信设为无限制以保留推送，但它的小程序进程(:appbrand)
++         * 闲置时占用大量内存，这个开关会把这类进程杀掉，而跑着服务的
++         * :push 进程重要度高，不受影响。
++         * 0 = 关，1 = 开
++         */
++        public static final String BG_TRIM_CACHED_PROCS = "bg_trim_cached_procs";
++
++        /** @hide */
++        public static final Validator BG_TRIM_CACHED_PROCS_VALIDATOR = sBooleanValidator;
++
+         /**
+          * Show search bar in recents
+          * 0 = Off, 1 = on
+@@ -2167,6 +2286,17 @@ public final class LineageSettings {
+             VALIDATORS.put(CAMERA_WAKE_SCREEN, CAMERA_WAKE_SCREEN_VALIDATOR);
+             VALIDATORS.put(CAMERA_SLEEP_ON_RELEASE, CAMERA_SLEEP_ON_RELEASE_VALIDATOR);
+             VALIDATORS.put(CAMERA_LAUNCH, CAMERA_LAUNCH_VALIDATOR);
++            VALIDATORS.put(KEY_CAMERA_ACTION, KEY_CAMERA_ACTION_VALIDATOR);
++            VALIDATORS.put(KEY_CAMERA_LONG_PRESS_ACTION,
++                    KEY_CAMERA_LONG_PRESS_ACTION_VALIDATOR);
++            VALIDATORS.put(KEY_CAMERA_DOUBLE_TAP_ACTION,
++                    KEY_CAMERA_DOUBLE_TAP_ACTION_VALIDATOR);
++            VALIDATORS.put(KEY_CAMERA_ACTION_PACKAGE,
++                    KEY_CAMERA_ACTION_PACKAGE_VALIDATOR);
++            VALIDATORS.put(KEY_CAMERA_LONG_PRESS_ACTION_PACKAGE,
++                    KEY_CAMERA_LONG_PRESS_ACTION_PACKAGE_VALIDATOR);
++            VALIDATORS.put(KEY_CAMERA_DOUBLE_TAP_ACTION_PACKAGE,
++                    KEY_CAMERA_DOUBLE_TAP_ACTION_PACKAGE_VALIDATOR);
+             VALIDATORS.put(STYLUS_ICON_ENABLED, STYLUS_ICON_ENABLED_VALIDATOR);
+             VALIDATORS.put(SWAP_VOLUME_KEYS_ON_ROTATION,
+                     SWAP_VOLUME_KEYS_ON_ROTATION_VALIDATOR);
+@@ -2204,6 +2334,10 @@ public final class LineageSettings {
+             VALIDATORS.put(LIVE_DISPLAY_HINTED, LIVE_DISPLAY_HINTED_VALIDATOR);
+             VALIDATORS.put(TRUST_INTERFACE_HINTED, TRUST_INTERFACE_HINTED_VALIDATOR);
+             VALIDATORS.put(DOUBLE_TAP_SLEEP_GESTURE, DOUBLE_TAP_SLEEP_GESTURE_VALIDATOR);
++            VALIDATORS.put(SWIPE_AWAY_FORCE_STOP, SWIPE_AWAY_FORCE_STOP_VALIDATOR);
++            VALIDATORS.put(BG_FORCE_STOP_TIMEOUT, BG_FORCE_STOP_TIMEOUT_VALIDATOR);
++            VALIDATORS.put(BG_FORCE_STOP_MODE, BG_FORCE_STOP_MODE_VALIDATOR);
++            VALIDATORS.put(BG_TRIM_CACHED_PROCS, BG_TRIM_CACHED_PROCS_VALIDATOR);
+             VALIDATORS.put(RECENTS_SHOW_SEARCH_BAR, RECENTS_SHOW_SEARCH_BAR_VALIDATOR);
+             VALIDATORS.put(NAVBAR_LEFT_IN_LANDSCAPE, NAVBAR_LEFT_IN_LANDSCAPE_VALIDATOR);
+             VALIDATORS.put(T9_SEARCH_INPUT_LOCALE, T9_SEARCH_INPUT_LOCALE_VALIDATOR);
+diff --git a/sdk/src/java/org/lineageos/internal/notification/LineageBatteryLights.java b/sdk/src/java/org/lineageos/internal/notification/LineageBatteryLights.java
+index 6898fc80..6a63980d 100644
+--- a/sdk/src/java/org/lineageos/internal/notification/LineageBatteryLights.java
++++ b/sdk/src/java/org/lineageos/internal/notification/LineageBatteryLights.java
+@@ -38,6 +38,8 @@ public final class LineageBatteryLights {
+ 
+     // Battery light intended operational state.
+     private boolean mLightEnabled = false; // Disable until observer is started
++    private final int mFullLevelThreshold =
++            android.os.SystemProperties.getInt("persist.sys.battery_light_full_level", 80);
+     private boolean mLightFullChargeDisabled;
+     private boolean mLedPulseEnabled;
+     private int mBatteryLowARGB;
+@@ -157,7 +159,9 @@ public final class LineageBatteryLights {
+                 ledValues.setColor(mBatteryLowARGB);
+             }
+         } else if (isChargingOrFull) {
+-            if (isCharged || level >= 90) {
++            // 「快充满」阈值原为写死的 90。改为 80：充到 80% 就亮绿灯，提示可以拔了，
++            // 对锂电池寿命更友好。可用 persist.sys.battery_light_full_level 覆盖（重启生效）。
++            if (isCharged || level >= mFullLevelThreshold) {
+                 // Battery is full or charging and nearly full.
+                 ledValues.setColor(mBatteryFullARGB);
+                 ledValues.setSolid();
+diff --git a/sdk/src/java/org/lineageos/internal/util/DeviceKeysConstants.java b/sdk/src/java/org/lineageos/internal/util/DeviceKeysConstants.java
+index f0532980..afe019ad 100644
+--- a/sdk/src/java/org/lineageos/internal/util/DeviceKeysConstants.java
++++ b/sdk/src/java/org/lineageos/internal/util/DeviceKeysConstants.java
+@@ -26,7 +26,8 @@ public class DeviceKeysConstants {
+         LAST_APP,
+         SPLIT_SCREEN,
+         KILL_APP,
+-        PLAY_PAUSE_MUSIC;
++        PLAY_PAUSE_MUSIC,
++        LAUNCH_APP;
+ 
+         public static Action fromIntSafe(int id) {
+             if (id < NOTHING.ordinal() || id > Action.values().length) {
+-- 
+2.43.0
+

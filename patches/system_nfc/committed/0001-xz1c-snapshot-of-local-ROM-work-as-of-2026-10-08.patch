@@ -1,0 +1,143 @@
+From f82c7c76e1f6ef42dab0d014098d0aff5bed6a49 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:19 +0800
+Subject: [PATCH] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I82002a8c2d4daddbe7c77cd9be005ce42c677c53
+---
+ src/adaptation/nfc_config.cc  | 26 ++++++++++++++++++++++++++
+ src/include/nfc_config.h      |  7 +++++++
+ src/nfa/dm/nfa_dm_discover.cc |  8 ++++++++
+ utils/config.cc               |  4 ++++
+ utils/include/config.h        |  2 ++
+ 5 files changed, 47 insertions(+)
+
+diff --git a/src/adaptation/nfc_config.cc b/src/adaptation/nfc_config.cc
+index f635fd50..6376b875 100644
+--- a/src/adaptation/nfc_config.cc
++++ b/src/adaptation/nfc_config.cc
+@@ -65,6 +65,28 @@ std::string findConfigPath() {
+ 
+ }  // namespace
+ 
++namespace {
++// 【本项目】见 nfc_config.h 的 setOverride。
++std::map<std::string, unsigned>& overrides() {
++  static std::map<std::string, unsigned> sOverrides;
++  return sOverrides;
++}
++}  // namespace
++
++void NfcConfig::setOverride(const std::string& key, unsigned value) {
++  overrides()[key] = value;
++  ConfigValue v(value);
++  getInstance().config_.setConfig(key, v);
++}
++
++void NfcConfig::clearOverride(const std::string& key) {
++  if (overrides().erase(key) > 0) {
++    // 重新加载一遍，让该项回到配置文件 / HAL 给出的原值。
++    getInstance().config_.clear();
++    getInstance().loadConfig();
++  }
++}
++
+ void NfcConfig::loadConfig() {
+   string config_path = findConfigPath();
+   CHECK(config_path != "");
+@@ -76,6 +98,10 @@ void NfcConfig::loadConfig() {
+   for (auto config : configMap) {
+     config_.addConfig(config.first, config.second);
+   }
++  for (auto& o : overrides()) {
++    ConfigValue v(o.second);
++    config_.setConfig(o.first, v);
++  }
+ }
+ 
+ NfcConfig::NfcConfig() { loadConfig(); }
+diff --git a/src/include/nfc_config.h b/src/include/nfc_config.h
+index 2ed5c325..e4fad123 100644
+--- a/src/include/nfc_config.h
++++ b/src/include/nfc_config.h
+@@ -50,6 +50,8 @@
+ #define NAME_NFA_POLL_BAIL_OUT_MODE "NFA_POLL_BAIL_OUT_MODE"
+ #define NAME_PRESENCE_CHECK_ALGORITHM "PRESENCE_CHECK_ALGORITHM"
+ #define NAME_NFA_PROPRIETARY_CFG "NFA_PROPRIETARY_CFG"
++// 【本项目】门禁卡模拟时 NFC-A 监听用的 SAK（LA_SEL_INFO）。只用 setOverride 设置，不放配置文件。
++#define NAME_XZ1C_LA_SEL_INFO "XZ1C_LA_SEL_INFO"
+ #define NAME_DEFAULT_OFFHOST_ROUTE "DEFAULT_OFFHOST_ROUTE"
+ #define NAME_OFFHOST_ROUTE_ESE "OFFHOST_ROUTE_ESE"
+ #define NAME_OFFHOST_ROUTE_UICC "OFFHOST_ROUTE_UICC"
+@@ -82,6 +84,11 @@ class NfcConfig {
+   static std::vector<uint8_t> getBytes(const std::string& key);
+   static void clear();
+ 
++  // 【本项目】运行时覆盖某个配置项（例如开启系统门禁卡模拟时把 DEFAULT_OFFHOST_ROUTE
++  // 改到主机）。覆盖值在每次 loadConfig 时最后写入，所以 clear()+重新加载后仍然有效。
++  static void setOverride(const std::string& key, unsigned value);
++  static void clearOverride(const std::string& key);
++
+  private:
+   void loadConfig();
+   static NfcConfig& getInstance();
+diff --git a/src/nfa/dm/nfa_dm_discover.cc b/src/nfa/dm/nfa_dm_discover.cc
+index 2da21dd6..309b52fe 100644
+--- a/src/nfa/dm/nfa_dm_discover.cc
++++ b/src/nfa/dm/nfa_dm_discover.cc
+@@ -28,6 +28,7 @@
+ 
+ #include "nci_hmsgs.h"
+ #include "nfa_api.h"
++#include "nfc_config.h"
+ #include "nfa_dm_int.h"
+ 
+ #if (NFC_NFCEE_INCLUDED == TRUE)
+@@ -367,6 +368,13 @@ static tNFA_STATUS nfa_dm_set_rf_listen_mode_config(
+     }
+   }
+ 
++  // 【本项目】系统门禁卡模拟：门禁读卡器按 MIFARE Classic（SAK 0x08）认卡。
++  // 默认的 0x20（ISO-DEP）会让读卡器改走 RATS/ISO-DEP，拿不到数据就断场，
++  // 实测只偶尔开门一次、之后连续刷不开。开启门禁卡时由 NativeNfcManager 覆盖。
++  if (NfcConfig::hasKey(NAME_XZ1C_LA_SEL_INFO)) {
++    sens_info = (uint8_t)NfcConfig::getUnsigned(NAME_XZ1C_LA_SEL_INFO);
++  }
++
+   p = params;
+ 
+   /*
+diff --git a/utils/config.cc b/utils/config.cc
+index 40be00f7..dc99927a 100644
+--- a/utils/config.cc
++++ b/utils/config.cc
+@@ -119,6 +119,10 @@ void ConfigFile::addConfig(const std::string& key, ConfigValue& value) {
+   values_.emplace(key, value);
+ }
+ 
++void ConfigFile::setConfig(const std::string& key, ConfigValue& value) {
++  values_[key] = value;
++}
++
+ void ConfigFile::parseFromFile(const std::string& file_name) {
+   string config;
+   bool config_read = ReadFileToString(file_name, &config);
+diff --git a/utils/include/config.h b/utils/include/config.h
+index e48717b3..82a02953 100644
+--- a/utils/include/config.h
++++ b/utils/include/config.h
+@@ -47,6 +47,8 @@ class ConfigFile {
+   void parseFromFile(const std::string& file_name);
+   void parseFromString(const std::string& config);
+   void addConfig(const std::string& config, ConfigValue& value);
++  // 【本项目】覆盖已有的配置项（addConfig 遇到重复键会 CHECK 失败）。
++  void setConfig(const std::string& config, ConfigValue& value);
+ 
+   bool hasKey(const std::string& key);
+   std::string getString(const std::string& key);
+-- 
+2.43.0
+

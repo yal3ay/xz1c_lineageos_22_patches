@@ -1,0 +1,35 @@
+From d705acef710b1537a147e971778b916d631ba412 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 10 Sep 2026 18:24:15 +0800
+Subject: [PATCH] =?UTF-8?q?DocumentsUI:=20=E5=A3=B0=E6=98=8E=20REQUEST=5FI?=
+ =?UTF-8?q?NSTALL=5FPACKAGES=EF=BC=8C=E4=BF=AE=E5=A4=8D=E4=BB=8E=E6=96=87?=
+ =?UTF-8?q?=E4=BB=B6=E7=AE=A1=E7=90=86=E5=99=A8=E5=AE=89=E8=A3=85=20APK=20?=
+ =?UTF-8?q?=E5=A4=B1=E8=B4=A5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change-Id: Ia794ceb5703d2ec398eb54a45b5f4aa266c8528d
+---
+ AndroidManifest.xml | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index 222e6e976..aec985eb1 100644
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -21,6 +21,11 @@
+ 
+     <uses-sdk android:minSdkVersion="29"/>
+ 
++    <!-- 允许从「文件」里点开 APK 触发安装。AOSP 的 DocumentsUI 不声明这个权限，
++         结果点 APK 后 PackageInstaller 的 InstallStart 会静默退出，只显示安装失败
++         （2026-09-10 实测复现）。声明后还需在
++         设置 → 应用 → 特殊应用权限 → 安装未知应用 里给「文件」打开。 -->
++    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+     <uses-permission android:name="android.permission.MANAGE_DOCUMENTS" />
+     <uses-permission android:name="android.permission.REMOVE_TASKS" />
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+-- 
+2.43.0
+

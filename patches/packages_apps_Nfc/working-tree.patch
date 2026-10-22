@@ -1,0 +1,190 @@
+diff --git a/nci/src/com/android/nfc/dhimpl/NativeNfcManager.java b/nci/src/com/android/nfc/dhimpl/NativeNfcManager.java
+index 854e0200..2a942227 100644
+--- a/nci/src/com/android/nfc/dhimpl/NativeNfcManager.java
++++ b/nci/src/com/android/nfc/dhimpl/NativeNfcManager.java
+@@ -87,6 +87,8 @@ public class NativeNfcManager implements DeviceHost {
+         initializeNativeStructure();
+         mContext = context;
+         mT4tNfceeMgr = new NativeT4tNfceeManager();
++        com.android.nfc.XzEventLog.init(context);
++        com.android.nfc.XzEventLog.log("NFC service process started");
+         applyEmulatedUidSetting();
+     }
+ 
+@@ -115,6 +117,9 @@ public class NativeNfcManager implements DeviceHost {
+             Log.w(TAG, "Failed to read " + SETTING_EMULATED_UID, e);
+         }
+         Log.i(TAG, "emulated uid: " + (uid == null ? "off" : uid.length + " bytes"));
++        com.android.nfc.XzEventLog.log("card uid sent to stack: " + (uid == null ? "OFF"
++                : uid.length + " bytes, ends ..."
++                + HexFormat.of().withUpperCase().formatHex(uid, uid.length - 2, uid.length)));
+         doSetEmulatedUid(uid);
+     }
+ 
+@@ -137,6 +142,7 @@ public class NativeNfcManager implements DeviceHost {
+     public boolean initialize() {
+         applyEmulatedUidSetting();
+         boolean ret = doInitialize();
++        com.android.nfc.XzEventLog.log("chip initialize " + (ret ? "OK" : "FAILED"));
+         if (ret && isProprietaryGetCapsSupported()) {
+             mProprietaryCaps = NfcProprietaryCaps.createFromByteArray(getProprietaryCaps());
+             Log.i(TAG, "mProprietaryCaps: " + mProprietaryCaps);
+diff --git a/src/com/android/nfc/NfcService.java b/src/com/android/nfc/NfcService.java
+index 22306e0a..f2a5202c 100644
+--- a/src/com/android/nfc/NfcService.java
++++ b/src/com/android/nfc/NfcService.java
+@@ -562,6 +562,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+ 
+     @Override
+     public void onRemoteEndpointDiscovered(TagEndpoint tag) {
++        XzEventLog.log("tag discovered (phone acted as reader)");
+         sendMessage(NfcService.MSG_NDEF_TAG, tag);
+     }
+ 
+@@ -570,6 +571,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+      */
+     @Override
+     public void onHostCardEmulationActivated(int technology) {
++        XzEventLog.log("card emulation ACTIVATED tech=" + technology);
+         mCardEmulationActivated = true;
+         try {
+             if (mNfcOemExtensionCallback != null) {
+@@ -612,6 +614,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+ 
+     @Override
+     public void onHostCardEmulationDeactivated(int technology) {
++        XzEventLog.log("card emulation deactivated tech=" + technology);
+         mCardEmulationActivated = false;
+         try {
+             if (mNfcOemExtensionCallback != null) {
+@@ -637,6 +640,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+ 
+     @Override
+     public void onRemoteFieldActivated() {
++        XzEventLog.fieldOn();
+         mRfFieldActivated = true;
+         mLastFieldOnTimestamp = mNfcInjector.getWallClockMillis();
+         mNfcInjector.ensureWatchdogMonitoring();
+@@ -671,6 +675,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+ 
+     @Override
+     public void onRemoteFieldDeactivated() {
++        XzEventLog.fieldOff();
+         mRfFieldActivated = false;
+         try {
+             if (mNfcOemExtensionCallback != null) {
+@@ -763,6 +768,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+ 
+     @Override
+     public void onHwErrorReported() {
++        XzEventLog.log("HARDWARE ERROR reported, restarting stack");
+         if (android.nfc.Flags.nfcEventListener() && mCardEmulationManager != null) {
+             mCardEmulationManager.onInternalErrorReported(
+                     CardEmulation.NFC_INTERNAL_ERROR_NFC_HARDWARE_ERROR);
+@@ -1251,12 +1257,22 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+                 false,
+                 new ContentObserver(new Handler(Looper.getMainLooper())) {
+                     private boolean mRestarting = false;
++                    private final Handler mDebounce = new Handler(Looper.getMainLooper());
+ 
+                     @Override
+                     public void onChange(boolean selfChange) {
++                        // Settings may write the card more than once when switching
++                        // (clear, then set). Wait for it to settle and restart once.
++                        mDebounce.removeCallbacksAndMessages(null);
++                        mDebounce.postDelayed(this::restartForNewCard, 1500);
++                    }
++
++                    private void restartForNewCard() {
+                         if (mRestarting) return;
+                         mRestarting = true;
+                         Log.i(TAG, "Emulated UID changed, shutting NFC down before restart");
++                        XzEventLog.log("card changed in Settings, restarting NFC");
++                        markCardRestart();
+                         new Thread(() -> {
+                             try {
+                                 new EnableDisableTask().execute(TASK_DISABLE)
+@@ -1283,6 +1299,13 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+                 final String uid = Settings.Global.getString(
+                         mContext.getContentResolver(), "nfc_emulated_uid");
+                 if (uid == null || uid.isEmpty()) return;
++                // This process was started by a card switch, which already sent the card
++                // at startup. Toggling NFC again here only made the phone deaf for
++                // a few more seconds while the user was at the door.
++                if (System.currentTimeMillis() - lastCardRestart() < 60_000) {
++                    XzEventLog.log("skip re-apply: process restarted for a card switch");
++                    return;
++                }
+                 final boolean on;
+                 synchronized (NfcService.this) {
+                     on = mState == NfcAdapter.STATE_ON;
+@@ -1292,6 +1315,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+                     return;
+                 }
+                 Log.i(TAG, "Access card set, restarting NFC once to re-apply the emulated UID");
++                XzEventLog.log("boot re-apply: NFC off/on to re-send card uid");
+                 new EnableDisableTask().execute(TASK_DISABLE);
+                 new EnableDisableTask().execute(TASK_ENABLE);
+             }
+@@ -1765,6 +1789,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+          * Does not toggle preferences.
+          */
+         boolean enableInternal() {
++            XzEventLog.log("NFC enable (state=" + mState + ")");
+             if (mState == NfcAdapter.STATE_ON) {
+                 return true;
+             } else if (mAlwaysOnState == NfcAdapter.STATE_ON) {
+@@ -1889,6 +1914,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+          * Does not toggle preferences.
+          */
+         boolean disableInternal() {
++            XzEventLog.log("NFC disable (state=" + mState + ")");
+             if (mState == NfcAdapter.STATE_OFF) {
+                 return true;
+             }
+@@ -5531,6 +5557,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+     };
+ 
+     private void applyScreenState(int screenState) {
++        XzEventLog.log("screen state " + ScreenStateHelper.screenStateToString(screenState));
+         if(mFeatureFlags.reduceStateTransition() &&
+                 mIsWatchType && !mCardEmulationManager.isRequiresScreenOnServiceExist()) {
+             if (screenState == ScreenStateHelper.SCREEN_STATE_OFF_LOCKED) {
+@@ -5662,6 +5689,29 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+         }
+     }
+ 
++    // XZ1C: remember when NFC was restarted for a card switch (survives the process kill).
++    private java.io.File cardRestartFile() {
++        return new java.io.File(mContext.createDeviceProtectedStorageContext().getFilesDir(),
++                "xz1c_card_restart");
++    }
++
++    private void markCardRestart() {
++        try (java.io.FileWriter w = new java.io.FileWriter(cardRestartFile())) {
++            w.write(Long.toString(System.currentTimeMillis()));
++        } catch (java.io.IOException e) {
++            Log.w(TAG, "markCardRestart", e);
++        }
++    }
++
++    private long lastCardRestart() {
++        try {
++            return Long.parseLong(new String(java.nio.file.Files.readAllBytes(
++                    cardRestartFile().toPath())).trim());
++        } catch (Exception e) {
++            return 0;
++        }
++    }
++
+     void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+         if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.DUMP)
+                 != PackageManager.PERMISSION_GRANTED) {
+@@ -5670,6 +5720,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+                     + " without permission " + android.Manifest.permission.DUMP);
+             return;
+         }
++        XzEventLog.dump(pw);
+ 
+         for (String arg : args) {
+             if ("--proto".equals(arg)) {

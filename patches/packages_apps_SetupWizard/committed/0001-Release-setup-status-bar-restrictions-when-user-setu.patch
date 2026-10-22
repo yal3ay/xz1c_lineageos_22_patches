@@ -1,0 +1,106 @@
+From 28b7c4d2852efa58f2cfe8f4c837d59af79d9651 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Mon, 28 Sep 2026 08:07:04 +0800
+Subject: [PATCH] Release setup status bar restrictions when user setup
+ completes
+
+Change-Id: Idf3b40ca01a49e3ac68e4864a7694be86f6e5928
+---
+ .../lineageos/setupwizard/SetupWizardApp.java | 38 ++++++++++++++++++-
+ .../setupwizard/util/SetupWizardUtils.java    |  3 +-
+ 2 files changed, 39 insertions(+), 2 deletions(-)
+
+diff --git a/src/org/lineageos/setupwizard/SetupWizardApp.java b/src/org/lineageos/setupwizard/SetupWizardApp.java
+index d635bfa..1c71664 100644
+--- a/src/org/lineageos/setupwizard/SetupWizardApp.java
++++ b/src/org/lineageos/setupwizard/SetupWizardApp.java
+@@ -8,6 +8,7 @@ package org.lineageos.setupwizard;
+ 
+ import android.app.Application;
+ import android.app.StatusBarManager;
++import android.database.ContentObserver;
+ import android.os.Bundle;
+ import android.os.Handler;
+ import android.os.Looper;
+@@ -47,6 +48,7 @@ public class SetupWizardApp extends Application {
+     public static final int RADIO_READY_TIMEOUT = 10 * 1000;
+ 
+     private static StatusBarManager sStatusBarManager;
++    private ContentObserver mSetupCompleteObserver;
+ 
+     private boolean mIsRadioReady = false;
+     private boolean mIgnoreSimLocale = false;
+@@ -62,8 +64,29 @@ public class SetupWizardApp extends Application {
+         if (LOGV) {
+             Log.v(TAG, "onCreate()");
+         }
+-        sStatusBarManager = SetupWizardUtils.disableStatusBar(this);
+         mHandler.postDelayed(mRadioTimeoutRunnable, SetupWizardApp.RADIO_READY_TIMEOUT);
++        // Receivers can start this process again after setup has finished. Do not
++        // acquire a new setup disable token or Quick Settings stays collapsed.
++        if (Settings.Secure.getInt(getContentResolver(),
++                Settings.Secure.USER_SETUP_COMPLETE, 0) != 0) {
++            return;
++        }
++        sStatusBarManager = SetupWizardUtils.disableStatusBar(this);
++        // Another setup wizard may mark completion without invoking our finish
++        // activity. Release our disable token when that setting changes too.
++        mSetupCompleteObserver = new ContentObserver(mHandler) {
++            @Override
++            public void onChange(boolean selfChange) {
++                releaseStatusBarIfSetupComplete();
++            }
++        };
++        getContentResolver().registerContentObserver(
++                Settings.Secure.getUriFor(Settings.Secure.USER_SETUP_COMPLETE),
++                false, mSetupCompleteObserver);
++        // Close the race between the initial check and observer registration.
++        if (releaseStatusBarIfSetupComplete()) {
++            return;
++        }
+         if (SetupWizardUtils.hasGMS(this)) {
+             SetupWizardUtils.disableHome(this);
+             if (SetupWizardUtils.isOwner()) {
+@@ -73,6 +96,19 @@ public class SetupWizardApp extends Application {
+         }
+     }
+ 
++    private boolean releaseStatusBarIfSetupComplete() {
++        if (Settings.Secure.getInt(getContentResolver(),
++                Settings.Secure.USER_SETUP_COMPLETE, 0) == 0) {
++            return false;
++        }
++        SetupWizardUtils.enableStatusBar();
++        if (mSetupCompleteObserver != null) {
++            getContentResolver().unregisterContentObserver(mSetupCompleteObserver);
++            mSetupCompleteObserver = null;
++        }
++        return true;
++    }
++
+     public static StatusBarManager getStatusBarManager() {
+         return sStatusBarManager;
+     }
+diff --git a/src/org/lineageos/setupwizard/util/SetupWizardUtils.java b/src/org/lineageos/setupwizard/util/SetupWizardUtils.java
+index 8315523..e5a17d6 100644
+--- a/src/org/lineageos/setupwizard/util/SetupWizardUtils.java
++++ b/src/org/lineageos/setupwizard/util/SetupWizardUtils.java
+@@ -191,13 +191,14 @@ public class SetupWizardUtils {
+                     Settings.Secure.TV_USER_SETUP_COMPLETE, 1);
+         }
+ 
++        // Release setup's shade restriction before unrelated completion work.
++        enableStatusBar();
+         handleEnableMetrics(context);
+         handleNavKeys(context);
+         handleRecoveryUpdate();
+         handleNavigationOption();
+         WallpaperManager.getInstance(context).forgetLoadedWallpaper();
+         disableHome(context);
+-        enableStatusBar();
+         context.finishAffinity();
+         context.nextAction(RESULT_SKIP);
+         Log.i(TAG, "Setup complete!");
+-- 
+2.43.0
+

@@ -1,0 +1,246 @@
+From 8180ff28435ca95c225762b4a24d72e7885c5fbc Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:16 +0800
+Subject: [PATCH] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: Ib7f640ae4d79c799fc6f5422aab5ee698f62cbd9
+---
+ nci/jni/NativeNfcManager.cpp                  | 58 ++++++++++++++++++
+ nci/jni/RoutingManager.cpp                    |  3 +
+ .../android/nfc/dhimpl/NativeNfcManager.java  | 33 +++++++++++
+ src/com/android/nfc/NfcService.java           | 59 +++++++++++++++++++
+ 4 files changed, 153 insertions(+)
+
+diff --git a/nci/jni/NativeNfcManager.cpp b/nci/jni/NativeNfcManager.cpp
+index d68edaa9..bd3db739 100644
+--- a/nci/jni/NativeNfcManager.cpp
++++ b/nci/jni/NativeNfcManager.cpp
+@@ -138,6 +138,10 @@ static SyncEvent sNfaDisableEvent;               // event for NFA_Disable()
+ static SyncEvent sNfaEnableDisablePollingEvent;  // event for
+                                                  // NFA_EnablePolling(),
+                                                  // NFA_DisablePolling()
++// 【本项目】系统内置门禁卡模拟：要模拟的卡号（NFCID1，4/7/10 字节）。空 = 不模拟。
++// 由 Java 层 NativeNfcManager 从 Settings.Global "nfc_emulated_uid" 读出后传进来。
++static std::vector<uint8_t> gXz1cEmulatedUid;
++static void nfcManager_doSetEmulatedUid(JNIEnv* e, jobject, jbyteArray uid);
+ SyncEvent gNfaSetConfigEvent;                    // event for Set_Config....
+ SyncEvent gNfaGetConfigEvent;                    // event for Get_Config....
+ SyncEvent gNfaVsCommand;                         // event for VS commands
+@@ -2483,6 +2487,8 @@ static JNINativeMethod gMethods[] = {
+ 
+     {"doInitialize", "()Z", (void*)nfcManager_doInitialize},
+ 
++    {"doSetEmulatedUid", "([B)V", (void*)nfcManager_doSetEmulatedUid},
++
+     {"doSetPartialInitMode", "(I)V", (void*)nfcManager_doSetPartialInitMode},
+ 
+     {"doDeinitialize", "()Z", (void*)nfcManager_doDeinitialize},
+@@ -2664,6 +2670,58 @@ void doStartupConfig() {
+   // configure NFCC_CONFIG_CONTROL- NFCC allowed to manage RF configuration.
+   nfcManager_configNfccConfigControl(true);
+ 
++  // 【本项目】系统内置门禁卡模拟：把卡号写进「作为 A 类卡被读时报出的 NFCID1」(0x33)。
++  // 与第三方卡模拟器在 libnfc-cxd22xx.conf 的 NFA_DM_START_UP_CFG 末尾追加
++  // 33:04:<UID> 是同一个参数，只是改为每次 NFC 启动时由系统下发，不需要 root / 模块。
++  if (!gXz1cEmulatedUid.empty()) {
++    SyncEventGuard guard(gNfaSetConfigEvent);
++    tNFA_STATUS stat = NFA_SetConfig(NCI_PARAM_ID_LA_NFCID1,
++                                     gXz1cEmulatedUid.size(),
++                                     gXz1cEmulatedUid.data());
++    if (stat == NFA_STATUS_OK) {
++      gNfaSetConfigEvent.wait();
++      LOG(INFO) << StringPrintf("%s: emulated NFCID1 set (%zu bytes)", __func__,
++                                gXz1cEmulatedUid.size());
++    } else {
++      LOG(ERROR) << StringPrintf("%s: failed to set emulated NFCID1: 0x%X",
++                                 __func__, stat);
++    }
++  }
++}
++
++/*******************************************************************************
++**
++** Function:        nfcManager_doSetEmulatedUid
++**
++** Description:     【本项目】设置 / 清除系统门禁卡模拟的卡号。必须在 doInitialize
++**                  之前调用；开启时把 A/B 类卡的默认路由改到主机（FeliCa 路由不动），
++**                  否则读卡器问到的是安全芯片而不是这个卡号。
++**
++*******************************************************************************/
++static void nfcManager_doSetEmulatedUid(JNIEnv* e, jobject, jbyteArray uid) {
++  gXz1cEmulatedUid.clear();
++  if (uid != nullptr) {
++    jsize len = e->GetArrayLength(uid);
++    if (len == 4 || len == 7 || len == 10) {
++      jbyte* b = e->GetByteArrayElements(uid, nullptr);
++      gXz1cEmulatedUid.assign((uint8_t*)b, (uint8_t*)b + len);
++      e->ReleaseByteArrayElements(uid, b, JNI_ABORT);
++    }
++  }
++  if (gXz1cEmulatedUid.empty()) {
++    NfcConfig::clearOverride(NAME_DEFAULT_OFFHOST_ROUTE);
++    NfcConfig::clearOverride(NAME_XZ1C_LA_SEL_INFO);
++  } else {
++    NfcConfig::setOverride(NAME_DEFAULT_OFFHOST_ROUTE, 0x00 /* host */);
++    // 4 字节卡号 + ATQA 0x0004 的门禁卡是 MIFARE Classic 1K，SAK 必须是 0x08。
++    if (gXz1cEmulatedUid.size() == 4) {
++      NfcConfig::setOverride(NAME_XZ1C_LA_SEL_INFO, 0x08);
++    } else {
++      NfcConfig::clearOverride(NAME_XZ1C_LA_SEL_INFO);
++    }
++  }
++  LOG(INFO) << StringPrintf("%s: emulation %s", __func__,
++                            gXz1cEmulatedUid.empty() ? "off" : "on");
+ }
+ 
+ /*******************************************************************************
+diff --git a/nci/jni/RoutingManager.cpp b/nci/jni/RoutingManager.cpp
+index 27c2b59d..c83dec21 100755
+--- a/nci/jni/RoutingManager.cpp
++++ b/nci/jni/RoutingManager.cpp
+@@ -141,6 +141,9 @@ RoutingManager::~RoutingManager() {}
+ bool RoutingManager::initialize(nfc_jni_native_data* native) {
+   static const char fn[] = "RoutingManager::initialize()";
+   mNativeData = native;
++  // 【本项目】单例构造可能早于系统门禁卡模拟的配置覆盖，这里重新读一次。
++  mDefaultOffHostRoute =
++      NfcConfig::getUnsigned(NAME_DEFAULT_OFFHOST_ROUTE, 0x00);
+   mRxDataBuffer.clear();
+ 
+   {
+diff --git a/nci/src/com/android/nfc/dhimpl/NativeNfcManager.java b/nci/src/com/android/nfc/dhimpl/NativeNfcManager.java
+index 9e9ee766..854e0200 100644
+--- a/nci/src/com/android/nfc/dhimpl/NativeNfcManager.java
++++ b/nci/src/com/android/nfc/dhimpl/NativeNfcManager.java
+@@ -26,6 +26,7 @@ import android.nfc.tech.Ndef;
+ import android.nfc.tech.TagTechnology;
+ import android.os.Bundle;
+ import android.os.Trace;
++import android.provider.Settings;
+ import android.sysprop.NfcProperties;
+ import android.util.Log;
+ 
+@@ -86,8 +87,39 @@ public class NativeNfcManager implements DeviceHost {
+         initializeNativeStructure();
+         mContext = context;
+         mT4tNfceeMgr = new NativeT4tNfceeManager();
++        applyEmulatedUidSetting();
+     }
+ 
++    /**
++     * 【本项目】系统内置门禁卡模拟：Settings.Global "nfc_emulated_uid" 存要模拟的卡号，
++     * 十六进制、4/7/10 字节（例如 "04A1B2C3"），为空或格式不对即不模拟。
++     *
++     * 构造时就下发一次：RoutingOptionManager 在 NFC 服务启动时读取默认 offhost 路由，
++     * 必须在那之前把覆盖值设好。每次 initialize() 前再下发一次，以便改了卡号后
++     * 重启 NFC 即生效。
++     */
++    static final String SETTING_EMULATED_UID = "nfc_emulated_uid";
++
++    private void applyEmulatedUidSetting() {
++        byte[] uid = null;
++        try {
++            final String hex = Settings.Global.getString(mContext.getContentResolver(),
++                    SETTING_EMULATED_UID);
++            if (hex != null) {
++                final String clean = hex.replaceAll("[^0-9A-Fa-f]", "");
++                if (clean.length() == 8 || clean.length() == 14 || clean.length() == 20) {
++                    uid = HexFormat.of().parseHex(clean);
++                }
++            }
++        } catch (RuntimeException e) {
++            Log.w(TAG, "Failed to read " + SETTING_EMULATED_UID, e);
++        }
++        Log.i(TAG, "emulated uid: " + (uid == null ? "off" : uid.length + " bytes"));
++        doSetEmulatedUid(uid);
++    }
++
++    private native void doSetEmulatedUid(byte[] uid);
++
+     public native boolean initializeNativeStructure();
+ 
+     private native boolean doDownload();
+@@ -103,6 +135,7 @@ public class NativeNfcManager implements DeviceHost {
+ 
+     @Override
+     public boolean initialize() {
++        applyEmulatedUidSetting();
+         boolean ret = doInitialize();
+         if (ret && isProprietaryGetCapsSupported()) {
+             mProprietaryCaps = NfcProprietaryCaps.createFromByteArray(getProprietaryCaps());
+diff --git a/src/com/android/nfc/NfcService.java b/src/com/android/nfc/NfcService.java
+index 5f3f10e3..22306e0a 100644
+--- a/src/com/android/nfc/NfcService.java
++++ b/src/com/android/nfc/NfcService.java
+@@ -1238,6 +1238,65 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback
+                             R.array.tag_intent_blocked_app_list)));
+         }
+ 
++        // 【本项目】系统内置门禁卡：设置里切换卡号（Settings.Global "nfc_emulated_uid"）后
++        // 让新卡号生效。卡号在 NFC 服务启动时下发（NativeNfcManager.applyEmulatedUidSetting），
++        // 而 RoutingOptionManager 也在启动时缓存默认 offhost 路由，开关模拟时单纯重开 NFC
++        // 不会刷新这个缓存 —— 所以结束本进程，由系统重新拉起（persistent，约 2 秒）。
++        // 2026-10-07：以前是直接 killProcess，HAL 还开着，回调打到已死的进程上，
++        // android.hardware.nfc@1.1-service 随即 SIGSEGV；两边同时重启后芯片里没有卡号，
++        // 门禁刷不开。现在先走正常关闭（TASK_DISABLE 会 deinitialize、关 HAL，
++        // 不改「NFC 开/关」的保存值），关完再结束进程，重启后照常打开并下发卡号。
++        mContext.getContentResolver().registerContentObserver(
++                Settings.Global.getUriFor("nfc_emulated_uid"),
++                false,
++                new ContentObserver(new Handler(Looper.getMainLooper())) {
++                    private boolean mRestarting = false;
++
++                    @Override
++                    public void onChange(boolean selfChange) {
++                        if (mRestarting) return;
++                        mRestarting = true;
++                        Log.i(TAG, "Emulated UID changed, shutting NFC down before restart");
++                        new Thread(() -> {
++                            try {
++                                new EnableDisableTask().execute(TASK_DISABLE)
++                                        .get(10, TimeUnit.SECONDS);
++                            } catch (Exception e) {
++                                Log.e(TAG, "NFC disable before restart failed", e);
++                            }
++                            Log.i(TAG, "Restarting NFC service for the new emulated UID");
++                            Process.killProcess(Process.myPid());
++                        }, "nfc-uid-restart").start();
++                    }
++                });
++
++        // 【本项目】开机后门禁卡号偶尔没写进 NFC 芯片（手动关开一次 NFC 即恢复）。
++        // NFC 不是 direct-boot 应用，进程在首次解锁后才起，错过 USER_UNLOCKED 广播；
++        // 所以在服务起来约 8 秒后，若设了门禁卡且 NFC 已开，就关开一次 NFC 重新下发卡号。
++        // 每个进程只做一次；NFC 还没开好就每 5 秒再看一次，最多 6 次。
++        final Handler reapplyHandler = new Handler(Looper.getMainLooper());
++        reapplyHandler.postDelayed(new Runnable() {
++            private int mTries = 0;
++
++            @Override
++            public void run() {
++                final String uid = Settings.Global.getString(
++                        mContext.getContentResolver(), "nfc_emulated_uid");
++                if (uid == null || uid.isEmpty()) return;
++                final boolean on;
++                synchronized (NfcService.this) {
++                    on = mState == NfcAdapter.STATE_ON;
++                }
++                if (!on) {
++                    if (++mTries < 6) reapplyHandler.postDelayed(this, 5000);
++                    return;
++                }
++                Log.i(TAG, "Access card set, restarting NFC once to re-apply the emulated UID");
++                new EnableDisableTask().execute(TASK_DISABLE);
++                new EnableDisableTask().execute(TASK_ENABLE);
++            }
++        }, 8000);
++
+         Uri uri = Settings.Global.getUriFor(Constants.SETTINGS_SATELLITE_MODE_ENABLED);
+         if (uri == null) {
+             Log.e(TAG, "satellite mode key does not exist in Settings");
+-- 
+2.43.0
+

@@ -1,0 +1,11 @@
+XZ1C LineageOS 22.2 patch series
+Copyright (C) 2026 the contributors
+
+Each patch modifies files from the Android Open Source Project or LineageOS.
+Those files remain under their original licenses and copyright headers. The
+original material in this repository (the patch collection and documentation)
+is Apache-2.0. The DnsResolver patches include vendored third-party source
+under MIT and BSD licenses; see the license files in the patched tree.
+
+Sony, Xperia, and XZ1 Compact are trademarks of Sony Corporation. This project
+is unofficial and is not affiliated with or endorsed by Sony or LineageOS.

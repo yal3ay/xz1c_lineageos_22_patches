@@ -1,0 +1,99 @@
+From 94e4651827dc35ce292e322cb0b6513962fd653c Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:15 +0800
+Subject: [PATCH] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I9b784620c192fba142228aa4fc8bc68620fbde57
+---
+ .../server/wifi/hal/WifiStaIfaceAidlImpl.java | 12 +++++++++++-
+ .../wifi/hal/WifiStaIfaceAidlImplTest.java    | 19 +++++++++++++++++++
+ 2 files changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/service/java/com/android/server/wifi/hal/WifiStaIfaceAidlImpl.java b/service/java/com/android/server/wifi/hal/WifiStaIfaceAidlImpl.java
+index 583c63709d..e274935409 100644
+--- a/service/java/com/android/server/wifi/hal/WifiStaIfaceAidlImpl.java
++++ b/service/java/com/android/server/wifi/hal/WifiStaIfaceAidlImpl.java
+@@ -95,6 +95,10 @@ public class WifiStaIfaceAidlImpl implements IWifiStaIface {
+     private String mIfaceName;
+     private Context mContext;
+     private SsidTranslator mSsidTranslator;
++    // Some legacy vendor implementations expose AIDL v2 but do not implement
++    // cached scan data. Remember that response so periodic callers do not keep
++    // crossing the binder boundary and filling logcat.
++    private boolean mCachedScanDataUnsupported;
+ 
+     private final boolean mWifiLinkLayerAllRadiosStatsAggregationEnabled;
+ 
+@@ -393,13 +397,19 @@ public class WifiStaIfaceAidlImpl implements IWifiStaIface {
+         final String methodStr = "getCachedScanData";
+         synchronized (mLock) {
+             try {
+-                if (!isServiceVersionAtLeast(2)
++                if (mCachedScanDataUnsupported
++                        || !isServiceVersionAtLeast(2)
+                         || !checkIfaceAndLogFailure(methodStr)) return null;
+                 CachedScanData scanData = mWifiStaIface.getCachedScanData();
+                 return halToFrameworkCachedScanData(scanData);
+             } catch (RemoteException e) {
+                 handleRemoteException(e, methodStr);
+             } catch (ServiceSpecificException e) {
++                if (e.errorCode == WifiStatusCode.ERROR_NOT_SUPPORTED) {
++                    mCachedScanDataUnsupported = true;
++                    Log.i(TAG, methodStr + " is not supported by the vendor HAL");
++                    return null;
++                }
+                 handleServiceSpecificException(e, methodStr);
+             }
+             return null;
+diff --git a/service/tests/wifitests/src/com/android/server/wifi/hal/WifiStaIfaceAidlImplTest.java b/service/tests/wifitests/src/com/android/server/wifi/hal/WifiStaIfaceAidlImplTest.java
+index 5bd0b260f1..c332e471f8 100644
+--- a/service/tests/wifitests/src/com/android/server/wifi/hal/WifiStaIfaceAidlImplTest.java
++++ b/service/tests/wifitests/src/com/android/server/wifi/hal/WifiStaIfaceAidlImplTest.java
+@@ -21,8 +21,10 @@ import static com.android.server.wifi.TestUtil.createCapabilityBitset;
+ import static org.junit.Assert.assertArrayEquals;
+ import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.assertNotNull;
++import static org.junit.Assert.assertNull;
+ import static org.junit.Assert.assertTrue;
+ import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.Mockito.times;
+ import static org.mockito.Mockito.verify;
+ import static org.mockito.Mockito.when;
+ 
+@@ -57,6 +59,7 @@ import android.net.wifi.ScanResult;
+ import android.net.wifi.WifiManager;
+ import android.net.wifi.WifiScanner.ScanData;
+ import android.net.wifi.WifiSsid;
++import android.os.ServiceSpecificException;
+ 
+ import com.android.dx.mockito.inline.extended.ExtendedMockito;
+ import com.android.dx.mockito.inline.extended.StaticMockitoSession;
+@@ -376,6 +379,22 @@ public class WifiStaIfaceAidlImplTest extends WifiBaseTest {
+         assertEquals("61:52:43:34:25:16", scanResults[0].BSSID);
+     }
+ 
++    /**
++     * An AIDL v2 vendor HAL may leave cached scan data unimplemented. Once that
++     * is known, subsequent requests must not call into the HAL again.
++     */
++    @Test
++    public void testGetCachedScanDataUnsupportedIsRemembered() throws Exception {
++        when(WifiHalAidlImpl.isServiceVersionAtLeast(2)).thenReturn(true);
++        when(mIWifiStaIfaceMock.getCachedScanData()).thenThrow(
++                new ServiceSpecificException(WifiStatusCode.ERROR_NOT_SUPPORTED));
++
++        assertNull(mDut.getCachedScanData());
++        assertNull(mDut.getCachedScanData());
++
++        verify(mIWifiStaIfaceMock, times(1)).getCachedScanData();
++    }
++
+     /**
+      * Tests setRoamingMode.
+      */
+-- 
+2.43.0
+

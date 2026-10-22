@@ -1,0 +1,322 @@
+From d2be8fce5c4ba6aad361e3889419775d95991bb2 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Sun, 4 Oct 2026 20:08:51 +0800
+Subject: [PATCH 3/4] xz1c-engine: pool DoT connections and retry closed idle
+ ones
+
+DoT queries shared one connection behind a mutex, so parallel lookups
+queued behind each other, and the first query after the server closed
+an idle connection failed with EOF.
+
+Keep up to 4 DoT connections, drop idle ones older than 20s, and retry
+once on a fresh connection when a reused one fails. Only successful
+queries update validation state; failures are left to the validation
+thread so a single lost packet no longer reports the server as broken.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I076e5c8adc26d95ae5a101c5f56854e0792161b3
+---
+ PrivateDnsConfiguration.cpp     |   4 +-
+ xz1c-engine/engine.go           | 129 ++++++++++++++++++++++++--------
+ xz1c-engine/engine_test.go      |  80 ++++++++++++++++++++
+ xz1c-engine/prebuilt/SHA256SUMS |   4 +-
+ 4 files changed, 183 insertions(+), 34 deletions(-)
+
+diff --git a/PrivateDnsConfiguration.cpp b/PrivateDnsConfiguration.cpp
+index b7e63ba1..3cfdd425 100644
+--- a/PrivateDnsConfiguration.cpp
++++ b/PrivateDnsConfiguration.cpp
+@@ -809,7 +809,9 @@ ssize_t PrivateDnsConfiguration::dohQuery(unsigned netId, const Slice query, con
+         const int result = xz1c_dns_query(engine->handle, query.base(), query.size(),
+                 answer.base(), answer.size(), std::min<uint64_t>(timeoutMs, 30000),
+                 reason, sizeof(reason));
+-        reportAliDns(netId, engine, result > 0);
++        // Only successes update validation here: one failed lookup on a flaky network must not
++        // flip the server to failed and notify ConnectivityService on every query.
++        if (result > 0) reportAliDns(netId, engine, true);
+         if (result < 0) LOG(WARNING) << "Encrypted DNS " << engine->protocol << " query failed: " << reason;
+         return result;
+     }
+diff --git a/xz1c-engine/engine.go b/xz1c-engine/engine.go
+index 3b4af306..d0ce65ed 100644
+--- a/xz1c-engine/engine.go
++++ b/xz1c-engine/engine.go
+@@ -29,6 +29,18 @@ import (
+ 
+ const maxDNSMessage = 65535
+ 
++// DoT keeps up to maxTLSConns connections so parallel lookups do not queue behind one
++// slow answer. Idle connections older than tlsIdleLimit are discarded before reuse.
++const (
++ maxTLSConns = 4
++ tlsIdleLimit = 20 * time.Second
++)
++
++type idleTLS struct {
++ conn net.Conn
++ since time.Time
++}
++
+ type engine struct {
+  protocol, hostname, path, endpoint string
+  ips []net.IP
+@@ -42,7 +54,9 @@ type engine struct {
+  transports map[string]*quic.Transport
+  connections map[string]*quic.Conn
+  tlsMu sync.Mutex
+- tlsConn net.Conn
++ tlsIdle []idleTLS
++ tlsClosed bool
++ tlsSlots chan struct{}
+  closeOnce sync.Once
+ }
+ 
+@@ -69,7 +83,7 @@ func newEngine(protocol, host string, ips []net.IP, port int, roots *x509.CertPo
+  ctx, cancel := context.WithCancel(context.Background())
+  e := &engine{protocol: protocol, hostname: host, path: "/dns-query", ips: ips, port: port,
+   endpoint: "https://"+host+"/dns-query",
+-  ctx: ctx, cancel: cancel, control: control,
++  ctx: ctx, cancel: cancel, control: control, tlsSlots: make(chan struct{}, maxTLSConns),
+   transports: make(map[string]*quic.Transport), connections: make(map[string]*quic.Conn),
+   tlsConfig: &tls.Config{ServerName: host, RootCAs: roots, MinVersion: tls.VersionTLS12,
+    ClientSessionCache: tls.NewLRUClientSessionCache(8)}}
+@@ -153,7 +167,9 @@ func (e *engine) close() {
+  e.closeOnce.Do(func() {
+   e.cancel()
+   e.tlsMu.Lock()
+-  if e.tlsConn != nil { e.tlsConn.Close(); e.tlsConn = nil }
++  e.tlsClosed = true
++  for _, idle := range e.tlsIdle { idle.conn.Close() }
++  e.tlsIdle = nil
+   e.tlsMu.Unlock()
+   if e.client != nil {
+    switch tr := e.client.Transport.(type) {
+@@ -247,42 +263,93 @@ func canonicalEndpoint(protocol, endpoint string) (*url.URL, error) {
+  return u,nil
+ }
+ 
+-func (e *engine) queryTLS(ctx context.Context, query []byte) ([]byte,error) {
++func (e *engine) queryTLS(ctx context.Context, query []byte) ([]byte, error) {
++ select {
++ case e.tlsSlots <- struct{}{}:
++ case <-ctx.Done():
++  return nil, ctx.Err()
++ }
++ defer func() { <-e.tlsSlots }()
++ conn, reused, err := e.takeTLS(ctx)
++ if err != nil { return nil, err }
++ answer, err := exchangeTLS(ctx, conn, query)
++ if err != nil && reused && ctx.Err() == nil && e.ctx.Err() == nil {
++  // The server may have closed a pooled connection while it was idle; DNS
++  // queries are idempotent, so retry once on a fresh connection.
++  if conn, err = e.dialTLS(ctx); err != nil { return nil, err }
++  answer, err = exchangeTLS(ctx, conn, query)
++ }
++ if err != nil { return nil, err }
++ e.putTLS(conn)
++ return answer, nil
++}
++
++// takeTLS returns a pooled connection (reused=true) or dials a new one.
++func (e *engine) takeTLS(ctx context.Context) (net.Conn, bool, error) {
+  e.tlsMu.Lock()
+- defer e.tlsMu.Unlock()
+- if ctx.Err()!=nil || e.ctx.Err()!=nil {return nil,context.Canceled}
+- if e.tlsConn==nil {
+-  var last error
+-  for _,ip:=range e.ips {
+-   attempt,cancel:=context.WithTimeout(ctx,3*time.Second)
+-   conn,err:=(&tls.Dialer{NetDialer:&net.Dialer{Control:e.control},Config:e.tlsConfig}).
+-    DialContext(attempt,"tcp",e.address(ip))
+-   cancel()
+-   if err==nil {e.tlsConn=conn;break}
+-   last=err;if ctx.Err()!=nil {break}
++ for len(e.tlsIdle) > 0 && !e.tlsClosed {
++  idle := e.tlsIdle[len(e.tlsIdle)-1]
++  e.tlsIdle = e.tlsIdle[:len(e.tlsIdle)-1]
++  if time.Since(idle.since) < tlsIdleLimit {
++   e.tlsMu.Unlock()
++   return idle.conn, true, nil
+   }
+-  if e.tlsConn==nil {return nil,last}
++  idle.conn.Close()
+  }
+- conn:=e.tlsConn
+- if deadline,ok:=ctx.Deadline();ok {conn.SetDeadline(deadline)}
++ closed := e.tlsClosed
++ e.tlsMu.Unlock()
++ if closed || ctx.Err() != nil || e.ctx.Err() != nil { return nil, false, context.Canceled }
++ conn, err := e.dialTLS(ctx)
++ return conn, false, err
++}
++
++func (e *engine) dialTLS(ctx context.Context) (net.Conn, error) {
++ var last error
++ for _, ip := range e.ips {
++  attempt, cancel := context.WithTimeout(ctx, 3*time.Second)
++  conn, err := (&tls.Dialer{NetDialer: &net.Dialer{Control: e.control}, Config: e.tlsConfig}).
++   DialContext(attempt, "tcp", e.address(ip))
++  cancel()
++  if err == nil { return conn, nil }
++  last = err
++  if ctx.Err() != nil { break }
++ }
++ return nil, last
++}
++
++func (e *engine) putTLS(conn net.Conn) {
++ conn.SetDeadline(time.Time{})
++ e.tlsMu.Lock()
++ defer e.tlsMu.Unlock()
++ if e.tlsClosed || len(e.tlsIdle) >= maxTLSConns { conn.Close(); return }
++ e.tlsIdle = append(e.tlsIdle, idleTLS{conn, time.Now()})
++}
++
++// exchangeTLS sends one framed query and reads its answer. It closes conn on any failure.
++func exchangeTLS(ctx context.Context, conn net.Conn, query []byte) ([]byte, error) {
++ if deadline, ok := ctx.Deadline(); ok { conn.SetDeadline(deadline) }
+  // Keep a canceled request from poisoning a later request on this pooled connection.
+- stopped:=make(chan struct{})
+- stop:=context.AfterFunc(ctx,func(){conn.Close();close(stopped)})
+- defer func(){if !stop(){<-stopped}}()
+- packet:=make([]byte,len(query)+2);binary.BigEndian.PutUint16(packet,uint16(len(query)));copy(packet[2:],query)
++ stopped := make(chan struct{})
++ stop := context.AfterFunc(ctx, func() { conn.Close(); close(stopped) })
++ defer func() { if !stop() { <-stopped } }()
++ packet := make([]byte, len(query)+2); binary.BigEndian.PutUint16(packet, uint16(len(query))); copy(packet[2:], query)
+  var answer []byte
+- _,err:=io.Copy(conn,bytes.NewReader(packet))
+- if err==nil {
++ _, err := io.Copy(conn, bytes.NewReader(packet))
++ if err == nil {
+   var size [2]byte
+-  _,err=io.ReadFull(conn,size[:])
+-  if err==nil {
+-   answer=make([]byte,int(binary.BigEndian.Uint16(size[:])))
+-   _,err=io.ReadFull(conn,answer)
+-   if err==nil {err=validateAnswer(query,answer)}
++  _, err = io.ReadFull(conn, size[:])
++  if err == nil {
++   answer = make([]byte, int(binary.BigEndian.Uint16(size[:])))
++   _, err = io.ReadFull(conn, answer)
++   if err == nil { err = validateAnswer(query, answer) }
+   }
+  }
+- if err!=nil || ctx.Err()!=nil {conn.Close();e.tlsConn=nil;if err==nil {err=ctx.Err()};return nil,err}
+- return answer,nil
++ if err != nil || ctx.Err() != nil {
++  conn.Close()
++  if err == nil { err = ctx.Err() }
++  return nil, err
++ }
++ return answer, nil
+ }
+ 
+ func (e *engine) doqConnection(ctx context.Context, ip net.IP) (*quic.Conn, error) {
+diff --git a/xz1c-engine/engine_test.go b/xz1c-engine/engine_test.go
+index 326ab80a..77673a31 100644
+--- a/xz1c-engine/engine_test.go
++++ b/xz1c-engine/engine_test.go
+@@ -11,6 +11,8 @@ import (
+  "net/http"
+  "net/http/httptest"
+  "os"
++ "sync"
++ "sync/atomic"
+  "testing"
+  "time"
+ 
+@@ -179,3 +181,81 @@ func TestCustomEndpoints(t *testing.T) {
+   if _,err:=canonicalEndpoint("doh",input);err==nil {t.Fatalf("invalid endpoint accepted: %s",input)}
+  }
+ }
++
++// startDoT serves framed DNS over TLS. closeAfter > 0 closes each connection after that many
++// answers (a server dropping idle clients); delay holds every answer back.
++func startDoT(t *testing.T, cert tls.Certificate, closeAfter int, delay time.Duration,
++ accepted, open, maxOpen *atomic.Int32) int {
++ t.Helper()
++ listener, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}})
++ if err != nil { t.Fatal(err) }
++ t.Cleanup(func() { listener.Close() })
++ go func() {
++  for {
++   conn, err := listener.Accept(); if err != nil { return }
++   accepted.Add(1)
++   if n := open.Add(1); n > maxOpen.Load() { maxOpen.Store(n) }
++   go func() {
++    defer open.Add(-1)
++    defer conn.Close()
++    for served := 0; closeAfter == 0 || served < closeAfter; served++ {
++     var size [2]byte
++     if _, err := io.ReadFull(conn, size[:]); err != nil { return }
++     q := make([]byte, int(binary.BigEndian.Uint16(size[:])))
++     if _, err := io.ReadFull(conn, q); err != nil { return }
++     time.Sleep(delay)
++     conn.Write(append(size[:], echoAnswer(q)...))
++    }
++   }()
++  }
++ }()
++ return listener.Addr().(*net.TCPAddr).Port
++}
++
++func TestDoTRetriesClosedIdleConnection(t *testing.T) {
++ query := testQuery(t)
++ cert, roots := testCertificate(t)
++ var accepted, open, maxOpen atomic.Int32
++ port := startDoT(t, cert, 1, 0, &accepted, &open, &maxOpen)
++ e, err := newEngine("dot", "example.com", []net.IP{net.ParseIP("127.0.0.1")}, port, roots, nil)
++ if err != nil { t.Fatal(err) }
++ defer e.close()
++ for i := 0; i < 3; i++ {
++  // Let the server's close reach the pooled connection before it is reused.
++  time.Sleep(50 * time.Millisecond)
++  ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++  _, err := e.query(ctx, query); cancel()
++  if err != nil { t.Fatalf("query %d after server closed idle connection: %v", i, err) }
++ }
++ if accepted.Load() < 3 { t.Fatalf("expected a fresh connection per query, got %d", accepted.Load()) }
++}
++
++func TestDoTParallelQueries(t *testing.T) {
++ query := testQuery(t)
++ cert, roots := testCertificate(t)
++ var accepted, open, maxOpen atomic.Int32
++ const delay = 400 * time.Millisecond
++ port := startDoT(t, cert, 0, delay, &accepted, &open, &maxOpen)
++ e, err := newEngine("dot", "example.com", []net.IP{net.ParseIP("127.0.0.1")}, port, roots, nil)
++ if err != nil { t.Fatal(err) }
++ defer e.close()
++ const queries = 8
++ start := time.Now()
++ var wg sync.WaitGroup
++ errs := make(chan error, queries)
++ for i := 0; i < queries; i++ {
++  wg.Add(1)
++  go func() {
++   defer wg.Done()
++   ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
++   defer cancel()
++   if _, err := e.query(ctx, query); err != nil { errs <- err }
++  }()
++ }
++ wg.Wait(); close(errs)
++ for err := range errs { t.Fatal(err) }
++ elapsed := time.Since(start)
++ // Serialised on one connection this takes queries*delay; the pool allows maxTLSConns at once.
++ if elapsed >= queries*delay/2 { t.Fatalf("queries were not parallel: %v", elapsed) }
++ if maxOpen.Load() > maxTLSConns { t.Fatalf("opened %d connections, limit %d", maxOpen.Load(), maxTLSConns) }
++}
+diff --git a/xz1c-engine/prebuilt/SHA256SUMS b/xz1c-engine/prebuilt/SHA256SUMS
+index 3d74c819..e1580242 100644
+--- a/xz1c-engine/prebuilt/SHA256SUMS
++++ b/xz1c-engine/prebuilt/SHA256SUMS
+@@ -1,2 +1,2 @@
+-e3a02ad7b46093cb1f88360320aa2901c37fde647719e7979a7f6d6ef64b53ca  prebuilt/arm/libxz1c_dns_engine.so
+-e08b7516530e34b8f452ec5e7e205fbd3518fac0a4f3467a925ac704236ef6c9  prebuilt/arm64/libxz1c_dns_engine.so
++d5b5e739f60fde905c7fc95014d1a1b337796af6f0635fb4c1aa73dc7123e95e  prebuilt/arm64/libxz1c_dns_engine.so
++362a594c145623c1765353a54023cb64eebcf7b4f440b25e7de0e4977d7a4bec  prebuilt/arm/libxz1c_dns_engine.so
+-- 
+2.43.0
+

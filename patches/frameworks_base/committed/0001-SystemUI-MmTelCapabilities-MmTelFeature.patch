@@ -1,0 +1,500 @@
+From 42211abb283ac9100400d4ab03ea0bbdef2e67f4 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 10 Sep 2026 18:10:20 +0800
+Subject: [PATCH 1/6] =?UTF-8?q?SystemUI:=20=E4=BF=AE=E6=AD=A3=20MmTelCapab?=
+ =?UTF-8?q?ilities=20=E4=B8=BA=20MmTelFeature=20=E5=B5=8C=E5=A5=97?=
+ =?UTF-8?q?=E7=B1=BB?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change-Id: I2a8b13a18cff13ba8d5066a5197baad08cf51f57
+---
+ core/res/res/values/config.xml                |   3 +
+ core/res/res/values/symbols.xml               |   1 +
+ .../SystemUI/res/drawable/ic_qs_volte.xml     |  15 ++
+ .../SystemUI/res/drawable/stat_sys_volte.xml  |  52 ++++++
+ .../SystemUI/res/values-zh-rCN/cm_strings.xml |   2 +
+ packages/SystemUI/res/values/cm_strings.xml   |   3 +
+ packages/SystemUI/res/values/config.xml       |   2 +-
+ .../android/systemui/lineage/LineageModule.kt |   7 +
+ .../android/systemui/qs/tiles/VolteTile.java  | 161 ++++++++++++++++++
+ .../statusbar/phone/PhoneStatusBarPolicy.java |  93 ++++++++++
+ 10 files changed, 338 insertions(+), 1 deletion(-)
+ create mode 100644 packages/SystemUI/res/drawable/ic_qs_volte.xml
+ create mode 100644 packages/SystemUI/res/drawable/stat_sys_volte.xml
+ create mode 100644 packages/SystemUI/src/com/android/systemui/qs/tiles/VolteTile.java
+
+diff --git a/core/res/res/values/config.xml b/core/res/res/values/config.xml
+index 18fd4447c..2fb5c1974 100644
+--- a/core/res/res/values/config.xml
++++ b/core/res/res/values/config.xml
+@@ -60,6 +60,7 @@
+         <item><xliff:g id="id">@string/status_bar_oem_satellite</xliff:g></item>
+         <item><xliff:g id="id">@string/status_bar_wifi</xliff:g></item>
+         <item><xliff:g id="id">@string/status_bar_hotspot</xliff:g></item>
++        <item><xliff:g id="id">@string/status_bar_volte</xliff:g></item>
+         <item><xliff:g id="id">@string/status_bar_mobile</xliff:g></item>
+         <item><xliff:g id="id">@string/status_bar_airplane</xliff:g></item>
+         <item><xliff:g id="id">@string/status_bar_battery</xliff:g></item>
+@@ -93,6 +94,8 @@
+     <string translatable="false" name="status_bar_alarm_clock">alarm_clock</string>
+     <string translatable="false" name="status_bar_secure">secure</string>
+     <string translatable="false" name="status_bar_clock">clock</string>
++    <!-- 4G 高清通话（VoLTE）状态图标槽位 -->
++    <string translatable="false" name="status_bar_volte">volte</string>
+     <string translatable="false" name="status_bar_mobile">mobile</string>
+     <string translatable="false" name="status_bar_vpn">vpn</string>
+     <string translatable="false" name="status_bar_ethernet">ethernet</string>
+diff --git a/core/res/res/values/symbols.xml b/core/res/res/values/symbols.xml
+index f47032321..a021d4d33 100644
+--- a/core/res/res/values/symbols.xml
++++ b/core/res/res/values/symbols.xml
+@@ -3292,6 +3292,7 @@
+   <java-symbol type="string" name="status_bar_airplane" />
+   <java-symbol type="string" name="status_bar_no_calling" />
+   <java-symbol type="string" name="status_bar_call_strength" />
++  <java-symbol type="string" name="status_bar_volte" />
+   <java-symbol type="string" name="status_bar_mobile" />
+   <java-symbol type="string" name="status_bar_ethernet" />
+   <java-symbol type="string" name="status_bar_vpn" />
+diff --git a/packages/SystemUI/res/drawable/ic_qs_volte.xml b/packages/SystemUI/res/drawable/ic_qs_volte.xml
+new file mode 100644
+index 000000000..35b833023
+--- /dev/null
++++ b/packages/SystemUI/res/drawable/ic_qs_volte.xml
+@@ -0,0 +1,15 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 4G 高清通话（VoLTE）磁贴图标：话筒 + 信号弧 -->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24"
++    android:tint="?android:attr/colorControlNormal">
++    <path
++        android:fillColor="@android:color/white"
++        android:pathData="M6.62,10.79c1.44,2.83 3.76,5.14 6.59,6.59l2.2,-2.2c0.27,-0.27 0.67,-0.36 1.02,-0.24 1.12,0.37 2.33,0.57 3.57,0.57 0.55,0 1,0.45 1,1V20c0,0.55 -0.45,1 -1,1 -9.39,0 -17,-7.61 -17,-17 0,-0.55 0.45,-1 1,-1h3.5c0.55,0 1,0.45 1,1 0,1.25 0.2,2.45 0.57,3.57 0.11,0.35 0.03,0.74 -0.25,1.02l-2.2,2.2z"/>
++    <path
++        android:fillColor="@android:color/white"
++        android:pathData="M15.5,3.5c2.49,0 4.5,2.01 4.5,4.5h1.5c0,-3.31 -2.69,-6 -6,-6v1.5zM15.5,6.5c0.83,0 1.5,0.67 1.5,1.5h1.5c0,-1.66 -1.34,-3 -3,-3v1.5z"/>
++</vector>
+diff --git a/packages/SystemUI/res/drawable/stat_sys_volte.xml b/packages/SystemUI/res/drawable/stat_sys_volte.xml
+new file mode 100644
+index 000000000..6f159f7a4
+--- /dev/null
++++ b/packages/SystemUI/res/drawable/stat_sys_volte.xml
+@@ -0,0 +1,52 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 状态栏「4G 高清通话」图标。
++     取自 LineageOS 的 SystemUI 补丁 ic_volte.xml（Gerrit 279554，原作者 Qualcomm/
++     The Linux Foundation），14x17dp 的纯 HD 字形，就是给状态栏这个用途画的。
++     第一条 path 无 fillColor（不填充，仅作边界）；最后一条是零面积退化路径，均无害。
++     不要换成 Material 的 ic_hd 徽章版 —— 2026-09-09 用户明确选了这个字形版。 -->
++<!--Copyright (c) 2018, The Linux Foundation. All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met:
++ *  * Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ *  * Redistributions in binary form must reproduce the above
++ *    copyright notice, this list of conditions and the following
++ *    disclaimer in the documentation and/or other materials provided
++ *    with the distribution.
++ *  * Neither the name of The Linux Foundation nor the names of its
++ *    contributors may be used to endorse or promote products derived
++ *    from this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
++ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
++ * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
++ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
++ * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
++ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
++ * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
++ * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++-->
++
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="14dp"
++    android:height="17dp"
++    android:viewportWidth="14"
++    android:viewportHeight="17">
++
++    <path
++        android:pathData="M 1.2 4 H 13.7 V 13.2 H 1.2 V 4 Z" />
++    <path
++        android:fillColor="#FFFFFF"
++        android:pathData="M1.9,12.6V4h0.8v3.5h3.2V4h0.8v8.6H5.9v-4H2.7v4H1.9z" />
++    <path
++        android:fillColor="#FFFFFF"
++        android:pathData="M8,12.6V4h2.1c0.5,0,0.8,0,1.1,0.1c0.4,0.1,0.7,0.3,0.9,0.6c0.3,0.4,0.6,0.9,0.7,1.5s0.2,1.3,0.2,2c0,0.7-0.1,1.2-0.2,1.7c-0.1,0.5-0.2,0.9-0.4,1.3S12.2,11.8,12,12s-0.4,0.3-0.7,0.4s-0.6,0.1-1,0.1H8zM8.8,11.6h1.3c0.4,0,0.7-0.1,0.9-0.2c0.2-0.1,0.4-0.3,0.5-0.4c0.2-0.3,0.3-0.6,0.4-1.1c0.1-0.5,0.2-1,0.2-1.7c0-0.9-0.1-1.6-0.3-2.1c-0.2-0.5-0.5-0.8-0.8-1C11,5.1,10.6,5,10.1,5H8.8V11.6z" />
++    <path
++        android:fillColor="#000000"
++        android:pathData="M 2 9 L 1 9 L 1 9 L 2 9 Z" />
++</vector>
+diff --git a/packages/SystemUI/res/values-zh-rCN/cm_strings.xml b/packages/SystemUI/res/values-zh-rCN/cm_strings.xml
+index d226b0a48..6c50b7b89 100644
+--- a/packages/SystemUI/res/values-zh-rCN/cm_strings.xml
++++ b/packages/SystemUI/res/values-zh-rCN/cm_strings.xml
+@@ -79,4 +79,6 @@
+     <string name="screenshot_delete_description">删除屏幕截图</string>
+     <string name="screen_pinning_description_no_navbar">这会将其固定在此屏幕上，直至您取消固定为止。点击&amp;即可取消固定。</string>
+     <string name="screen_pinning_toast_no_navbar">要取消固定此屏幕，请点击&amp;按钮</string>
++    <string name="quick_settings_volte_label">4G 高清通话</string>
++    <string name="quick_settings_volte_unavailable">不可用</string>
+ </resources>
+diff --git a/packages/SystemUI/res/values/cm_strings.xml b/packages/SystemUI/res/values/cm_strings.xml
+index e35f1a6e2..539e1188c 100644
+--- a/packages/SystemUI/res/values/cm_strings.xml
++++ b/packages/SystemUI/res/values/cm_strings.xml
+@@ -135,4 +135,7 @@
+ 
+     <!-- Notify use that they are in Lock-to-app (for devices without navbar)-->
+     <string name="screen_pinning_toast_no_navbar">To unpin this screen, touch &amp; hold Back button</string>
++    <!-- 4G 高清通话(VoLTE)磁贴 -->
++    <string name="quick_settings_volte_label">4G HD Calling</string>
++    <string name="quick_settings_volte_unavailable">Unavailable</string>
+ </resources>
+diff --git a/packages/SystemUI/res/values/config.xml b/packages/SystemUI/res/values/config.xml
+index 79dd6fcc9..a71dad832 100644
+--- a/packages/SystemUI/res/values/config.xml
++++ b/packages/SystemUI/res/values/config.xml
+@@ -119,7 +119,7 @@
+ 
+     <!-- Tiles native to System UI. Order should match "quick_settings_tiles_default" -->
+     <string name="quick_settings_tiles_stock" translatable="false">
+-        internet,wifi,cell,bt,flashlight,dnd,alarm,airplane,nfc,controls,wallet,rotation,battery,cast,screenrecord,mictoggle,cameratoggle,location,hotspot,inversion,saver,dark,work,night,reverse,reduce_brightness,qr_code_scanner,onehanded,color_correction,dream,font_scaling,record_issue,hearing_devices,notes,ambient_display,aod,caffeine,heads_up,powershare,profiles,reading_mode,sync,usb_tether,vpn
++        internet,wifi,cell,bt,flashlight,dnd,alarm,airplane,nfc,controls,wallet,rotation,battery,cast,screenrecord,mictoggle,cameratoggle,location,hotspot,inversion,saver,dark,work,night,reverse,reduce_brightness,qr_code_scanner,onehanded,color_correction,dream,font_scaling,record_issue,hearing_devices,notes,ambient_display,aod,caffeine,heads_up,powershare,profiles,reading_mode,sync,usb_tether,vpn,volte
+     </string>
+ 
+     <!-- The tiles to display in QuickSettings -->
+diff --git a/packages/SystemUI/src/com/android/systemui/lineage/LineageModule.kt b/packages/SystemUI/src/com/android/systemui/lineage/LineageModule.kt
+index f30153073..af38af73f 100644
+--- a/packages/SystemUI/src/com/android/systemui/lineage/LineageModule.kt
++++ b/packages/SystemUI/src/com/android/systemui/lineage/LineageModule.kt
+@@ -27,6 +27,7 @@ import com.android.systemui.qs.tiles.ProfilesTile
+ import com.android.systemui.qs.tiles.ReadingModeTile
+ import com.android.systemui.qs.tiles.SyncTile
+ import com.android.systemui.qs.tiles.UsbTetherTile
++import com.android.systemui.qs.tiles.VolteTile
+ import com.android.systemui.qs.tiles.VpnTile
+ import com.android.systemui.qs.tiles.WifiTile
+ 
+@@ -103,6 +104,12 @@ interface LineageModule {
+     @StringKey(VpnTile.TILE_SPEC)
+     fun bindVpnTile(vpnTile: VpnTile): QSTileImpl<*>
+ 
++    /** Inject VolteTile into tileMap in QSModule */
++    @Binds
++    @IntoMap
++    @StringKey(VolteTile.TILE_SPEC)
++    fun bindVolteTile(volteTile: VolteTile): QSTileImpl<*>
++
+     /** Inject WifiTile into tileMap in QSModule */
+     @Binds
+     @IntoMap
+diff --git a/packages/SystemUI/src/com/android/systemui/qs/tiles/VolteTile.java b/packages/SystemUI/src/com/android/systemui/qs/tiles/VolteTile.java
+new file mode 100644
+index 000000000..47a67557b
+--- /dev/null
++++ b/packages/SystemUI/src/com/android/systemui/qs/tiles/VolteTile.java
+@@ -0,0 +1,161 @@
++/*
++ * Copyright (C) 2026 XZ1C Custom ROM
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.systemui.qs.tiles;
++
++import static com.android.internal.logging.MetricsLogger.VIEW_UNKNOWN;
++
++import android.content.Intent;
++import android.os.Handler;
++import android.os.Looper;
++import android.provider.Settings;
++import android.service.quicksettings.Tile;
++import android.telephony.SubscriptionManager;
++import android.telephony.ims.ImsMmTelManager;
++
++import androidx.annotation.Nullable;
++
++import com.android.internal.logging.MetricsLogger;
++import com.android.systemui.animation.Expandable;
++import com.android.systemui.dagger.qualifiers.Background;
++import com.android.systemui.dagger.qualifiers.Main;
++import com.android.systemui.plugins.ActivityStarter;
++import com.android.systemui.plugins.FalsingManager;
++import com.android.systemui.plugins.qs.QSTile.BooleanState;
++import com.android.systemui.plugins.statusbar.StatusBarStateController;
++import com.android.systemui.qs.QSHost;
++import com.android.systemui.qs.QsEventLogger;
++import com.android.systemui.qs.logging.QSLogger;
++import com.android.systemui.qs.tileimpl.QSTileImpl;
++import com.android.systemui.res.R;
++
++import javax.inject.Inject;
++
++/**
++ * 快捷设置磁贴：4G 高清通话（VoLTE）开关。
++ *
++ * 走的是框架的 ImsMmTelManager.setAdvancedCallingSettingEnabled()，
++ * 也就是设置里「4G 高清通话」那个开关背后的同一个接口 ——
++ * 只改 Android 侧的用户偏好，【不会去动 modem 配置、不碰 EFS】。
++ * （Sony 那套 CustomizationSelector 的自动切换会清空 EFS，已在本 ROM 里禁用。）
++ */
++public class VolteTile extends QSTileImpl<BooleanState> {
++
++    public static final String TILE_SPEC = "volte";
++
++    private final Icon mIcon = ResourceIcon.get(R.drawable.ic_qs_volte);
++
++    @Inject
++    public VolteTile(
++            QSHost host,
++            QsEventLogger uiEventLogger,
++            @Background Looper backgroundLooper,
++            @Main Handler mainHandler,
++            FalsingManager falsingManager,
++            MetricsLogger metricsLogger,
++            StatusBarStateController statusBarStateController,
++            ActivityStarter activityStarter,
++            QSLogger qsLogger
++    ) {
++        super(host, uiEventLogger, backgroundLooper, mainHandler, falsingManager, metricsLogger,
++                statusBarStateController, activityStarter, qsLogger);
++    }
++
++    @Override
++    public BooleanState newTileState() {
++        return new BooleanState();
++    }
++
++    @Override
++    public void handleSetListening(boolean listening) {
++    }
++
++    /** 取默认语音卡的 ImsMmTelManager，拿不到就返回 null（磁贴显示为不可用）。 */
++    @Nullable
++    private ImsMmTelManager getMmTelManager() {
++        int subId = SubscriptionManager.getDefaultVoiceSubscriptionId();
++        if (!SubscriptionManager.isValidSubscriptionId(subId)) {
++            return null;
++        }
++        try {
++            return ImsMmTelManager.createForSubscriptionId(subId);
++        } catch (Exception e) {
++            return null;
++        }
++    }
++
++    @Override
++    protected void handleClick(@Nullable Expandable expandable) {
++        ImsMmTelManager manager = getMmTelManager();
++        if (manager == null) {
++            return;
++        }
++        try {
++            boolean current = manager.isAdvancedCallingSettingEnabled();
++            manager.setAdvancedCallingSettingEnabled(!current);
++        } catch (Exception e) {
++            // IMS 不可用时这两个调用都会抛，忽略即可，状态刷新会显示为不可用
++        }
++        refreshState();
++    }
++
++    @Override
++    public Intent getLongClickIntent() {
++        // 长按进「移动网络」设置页，那里有同一个开关
++        return new Intent(Settings.ACTION_NETWORK_OPERATOR_SETTINGS);
++    }
++
++    @Override
++    public CharSequence getTileLabel() {
++        return mContext.getString(R.string.quick_settings_volte_label);
++    }
++
++    @Override
++    protected void handleUpdateState(BooleanState state, Object arg) {
++        state.label = getTileLabel();
++        state.icon = mIcon;
++
++        ImsMmTelManager manager = getMmTelManager();
++        if (manager == null) {
++            state.value = false;
++            state.state = Tile.STATE_UNAVAILABLE;
++            state.secondaryLabel = mContext.getString(R.string.quick_settings_volte_unavailable);
++            state.contentDescription = state.label;
++            return;
++        }
++
++        boolean enabled;
++        try {
++            enabled = manager.isAdvancedCallingSettingEnabled();
++        } catch (Exception e) {
++            state.value = false;
++            state.state = Tile.STATE_UNAVAILABLE;
++            state.secondaryLabel = mContext.getString(R.string.quick_settings_volte_unavailable);
++            state.contentDescription = state.label;
++            return;
++        }
++
++        state.value = enabled;
++        state.state = enabled ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE;
++        state.secondaryLabel = null;
++        state.contentDescription = state.label;
++    }
++
++    @Override
++    public int getMetricsCategory() {
++        return VIEW_UNKNOWN;
++    }
++}
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java b/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java
+index 7d8f5cbb0..6c0124e1c 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java
+@@ -46,6 +46,12 @@ import android.provider.Settings.Global;
+ import android.service.notification.ZenModeConfig;
+ import android.telecom.TelecomManager;
+ import android.text.format.DateFormat;
++import android.telephony.AccessNetworkConstants;
++import android.telephony.SubscriptionManager;
++import android.telephony.ims.ImsException;
++import android.telephony.ims.ImsMmTelManager;
++import android.telephony.ims.ImsReasonInfo;
++import android.telephony.ims.feature.MmTelFeature;
+ import android.util.Log;
+ import android.view.View;
+ 
+@@ -129,6 +135,14 @@ public class PhoneStatusBarPolicy
+     private final String mSlotMute;
+     private final String mSlotVibrate;
+     private final String mSlotAlarmClock;
++
++    /** 4G 高清通话（VoLTE）状态图标。
++     *  槽位已正式登记在 core/res 的 config_statusBarIcons 里，位置紧挨 status_bar_mobile 之前 ——
++     *  该数组的顺序就是状态栏从左到右的顺序，所以图标显示在信号格左侧。 */
++    private final String mSlotVolte;
++    private ImsMmTelManager mVolteImsManager;
++    private int mVolteSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
++    private boolean mVolteAvailable;
+     private final String mSlotManagedProfile;
+     private final String mSlotRotate;
+     private final String mSlotHeadset;
+@@ -258,6 +272,7 @@ public class PhoneStatusBarPolicy
+         mSlotMute = resources.getString(com.android.internal.R.string.status_bar_mute);
+         mSlotVibrate = resources.getString(com.android.internal.R.string.status_bar_volume);
+         mSlotAlarmClock = resources.getString(com.android.internal.R.string.status_bar_alarm_clock);
++        mSlotVolte = resources.getString(com.android.internal.R.string.status_bar_volte);
+         mSlotManagedProfile = resources.getString(
+                 com.android.internal.R.string.status_bar_managed_profile);
+         mSlotRotate = resources.getString(com.android.internal.R.string.status_bar_rotate);
+@@ -308,6 +323,11 @@ public class PhoneStatusBarPolicy
+         mIconController.setIcon(mSlotAlarmClock, R.drawable.stat_sys_alarm, null);
+         mIconController.setIconVisibility(mSlotAlarmClock, false);
+ 
++        // 4G 高清通话（VoLTE）：默认隐藏，IMS 在 WWAN 上注册成功后才显示
++        mIconController.setIcon(mSlotVolte, R.drawable.stat_sys_volte, null);
++        mIconController.setIconVisibility(mSlotVolte, false);
++        registerVolteListeners();
++
+         // zen
+         mIconController.setIcon(mSlotZen, R.drawable.stat_sys_dnd, null);
+         mIconController.setIconVisibility(mSlotZen, false);
+@@ -1070,4 +1090,77 @@ public class PhoneStatusBarPolicy
+ 
+         mIconController.setIconVisibility(mSlotConnectedDisplay, visible);
+     }
++
++    // ==================== 4G 高清通话（VoLTE）状态图标 ====================
++    //
++    // 数据源用 IMS 注册回调，而不是「设置里的 VoLTE 开关」——
++    // 开关只表示用户意愿，注册成功才代表真的能打高清通话。
++    // 只在 TRANSPORT_TYPE_WWAN 上显示；走 WLAN 注册的是 VoWiFi，不属于 4G 高清通话。
++
++    // 用 MmTel「语音能力」而不是「IMS 注册状态」作为判据：
++    //   * 注册状态在关掉 4G 高清通话开关后依然为 true（IMS 仍为短信等业务保持注册），
++    //     所以图标不会消失 —— 2026-09-10 实测到的问题。
++    //   * 语音能力（CAPABILITY_TYPE_VOICE）同时反映用户开关与注册结果，
++    //     即「此刻能不能打高清通话」，正是图标该表达的含义。
++    private final ImsMmTelManager.CapabilityCallback mVolteCapabilityCallback =
++            new ImsMmTelManager.CapabilityCallback() {
++                @Override
++                public void onCapabilitiesStatusChanged(MmTelFeature.MmTelCapabilities capabilities) {
++                    setVolteAvailable(capabilities != null
++                            && capabilities.isCapable(MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE));
++                }
++            };
++
++    private void registerVolteListeners() {
++        SubscriptionManager sm = mContext.getSystemService(SubscriptionManager.class);
++        if (sm != null) {
++            // 换卡/默认语音卡变化时要重新挂回调
++            sm.addOnSubscriptionsChangedListener(mUiBgExecutor,
++                    new SubscriptionManager.OnSubscriptionsChangedListener() {
++                        @Override
++                        public void onSubscriptionsChanged() {
++                            updateVolteSubscription();
++                        }
++                    });
++        }
++        mUiBgExecutor.execute(this::updateVolteSubscription);
++    }
++
++    private void updateVolteSubscription() {
++        final int subId = SubscriptionManager.getDefaultVoiceSubscriptionId();
++        if (subId == mVolteSubId && mVolteImsManager != null) {
++            return;
++        }
++        if (mVolteImsManager != null) {
++            try {
++                mVolteImsManager.unregisterMmTelCapabilityCallback(mVolteCapabilityCallback);
++            } catch (Exception e) {
++                Log.w(TAG, "unregisterMmTelCapabilityCallback failed", e);
++            }
++            mVolteImsManager = null;
++        }
++        mVolteSubId = subId;
++        setVolteAvailable(false);
++        if (!SubscriptionManager.isValidSubscriptionId(subId)) {
++            return;
++        }
++        try {
++            ImsMmTelManager manager = ImsMmTelManager.createForSubscriptionId(subId);
++            manager.registerMmTelCapabilityCallback(mUiBgExecutor, mVolteCapabilityCallback);
++            mVolteImsManager = manager;
++        } catch (ImsException | IllegalArgumentException | UnsupportedOperationException e) {
++            // 机器不支持 IMS 或此刻拿不到，图标保持隐藏即可
++            Log.w(TAG, "registerMmTelCapabilityCallback failed for subId=" + subId, e);
++            mVolteImsManager = null;
++        }
++    }
++
++    private void setVolteAvailable(boolean available) {
++        if (mVolteAvailable == available) {
++            return;
++        }
++        mVolteAvailable = available;
++        mMainExecutor.execute(() -> mIconController.setIconVisibility(mSlotVolte, available));
++    }
++
+ }
+-- 
+2.43.0
+

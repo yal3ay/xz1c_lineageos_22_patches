@@ -1,0 +1,108 @@
+From 4e1b691cdc696b10e73f9e30f1d53b4500183912 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:16 +0800
+Subject: [PATCH] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: Ia23fafcb58fb71da689f8caf9fb38d32a37dd32e
+---
+ AndroidManifest.xml                           | 10 ++++
+ .../receiver/NotificationReceiver.java        | 48 +++++++++++++++++++
+ 2 files changed, 58 insertions(+)
+
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index c6ba856..d20668e 100644
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -351,6 +351,16 @@
+             </intent-filter>
+         </receiver>
+ 
++        <!-- 【本项目】短信验证码「复制」后把该发件人的会话标为已读，见 NotificationReceiver。 -->
++        <receiver
++            android:name=".receiver.NotificationReceiver$MarkSenderReadReceiver"
++            android:exported="true"
++            android:permission="org.lineageos.smscodeautofill.permission.MARK_SMS_READ">
++            <intent-filter>
++                <action android:name="com.android.messaging.action.MARK_SENDER_READ" />
++            </intent-filter>
++        </receiver>
++
+         <receiver
+             android:name=".receiver.SendStatusReceiver"
+             android:exported="false">
+diff --git a/src/com/android/messaging/receiver/NotificationReceiver.java b/src/com/android/messaging/receiver/NotificationReceiver.java
+index 52866b2..a7d86e6 100644
+--- a/src/com/android/messaging/receiver/NotificationReceiver.java
++++ b/src/com/android/messaging/receiver/NotificationReceiver.java
+@@ -20,12 +20,18 @@ import android.content.BroadcastReceiver;
+ import android.content.Context;
+ import android.content.Intent;
+ 
++import com.android.messaging.datamodel.BugleDatabaseOperations;
+ import com.android.messaging.datamodel.BugleNotifications;
++import com.android.messaging.datamodel.DataModel;
++import com.android.messaging.datamodel.action.MarkAsReadAction;
++import com.android.messaging.sms.MmsUtils;
+ import com.android.messaging.datamodel.action.MarkAsSeenAction;
+ import com.android.messaging.ui.UIIntents;
+ import com.android.messaging.util.ConversationIdSet;
+ import com.android.messaging.util.LogUtil;
+ 
++import java.util.Collections;
++
+ // NotificationReceiver is used to handle delete intents from notifications. When a user
+ // clears all notifications or swipes a bugle notification away, the intent we pass in as
+ // the delete intent will get handled here.
+@@ -52,4 +58,46 @@ public class NotificationReceiver extends BroadcastReceiver {
+             }
+         }
+     }
++
++    /**
++     * 【本项目】按发件人把会话标为已读 —— 给系统自带的「短信验证码」用。
++     *
++     * 用户在验证码通知上点「复制」后，那条验证码短信就算看过了。本应用有自己的数据库，
++     * 不会从系统短信库同步已读状态，所以只改 telephony 库没用：界面仍显示未读、通知也不消失。
++     * 这里走本应用自己的 MarkAsReadAction，会同时更新本地库、telephony 库并刷新通知。
++     *
++     * 放在 NotificationReceiver 里做嵌套类，而不是新建文件：新增 .java 会改变 srcs 的
++     * glob，触发整棵树重新分析编译规则（本机约 15 分钟）。
++     *
++     * 发送方必须持有 org.lineageos.smscodeautofill.permission.MARK_SMS_READ
++     *（由验证码应用定义的 signature 权限，见清单）。
++     */
++    public static class MarkSenderReadReceiver extends BroadcastReceiver {
++        public static final String ACTION = "com.android.messaging.action.MARK_SENDER_READ";
++        public static final String EXTRA_ADDRESS = "address";
++
++        @Override
++        public void onReceive(final Context context, final Intent intent) {
++            if (!ACTION.equals(intent.getAction())) return;
++            final String address = intent.getStringExtra(EXTRA_ADDRESS);
++            if (address == null || address.isEmpty()) return;
++            final PendingResult result = goAsync();
++            new Thread(() -> {
++                try {
++                    final long threadId = MmsUtils.getOrCreateThreadId(context,
++                            Collections.singletonList(address));
++                    if (threadId < 0) return;
++                    final String conversationId = BugleDatabaseOperations.getExistingConversation(
++                            DataModel.get().getDatabase(), threadId, false /* senderBlocked */);
++                    if (conversationId != null) {
++                        MarkAsReadAction.markAsRead(conversationId);
++                    }
++                } catch (RuntimeException e) {
++                    LogUtil.w(TAG, "MarkSenderReadReceiver failed", e);
++                } finally {
++                    result.finish();
++                }
++            }, "MarkSenderRead").start();
++        }
++    }
+ }
+-- 
+2.43.0
+

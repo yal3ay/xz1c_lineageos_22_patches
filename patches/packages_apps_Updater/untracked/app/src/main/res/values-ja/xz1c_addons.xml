@@ -1,0 +1,38 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="addon_sony_apps">"Sony アプリ"</string>
+    <string name="addon_google_apps">"Google アプリ"</string>
+    <string name="addon_section_title">"追加アプリ"</string>
+    <string name="addon_view_contents">"内容を表示"</string>
+    <string name="addon_uninstall">"アンインストール"</string>
+    <string name="addon_uninstall_package">"このパッケージを削除"</string>
+    <string name="addon_install_action">"インストール"</string>
+    <string name="addon_state_installed">"インストール済み"</string>
+    <string name="addon_state_missing">"未インストール"</string>
+    <string name="addon_remove_pending">"削除待ち · 再起動が必要"</string>
+    <string name="addon_cancel_remove">"削除を取り消す"</string>
+    <string name="addon_sony_summary">"基本システムとは別に追加される Sony アプリ。"</string>
+    <string name="addon_google_summary">"Google Play ストアと Google サービス。"</string>
+    <string name="addon_back">"戻る"</string>
+    <string name="addon_app_version">"バージョン %1$s"</string>
+    <string name="addon_inventory_failed">"パッケージの内容を読み取れませんでした。"</string>
+    <string name="addon_update_policy">"システム更新時も保持"</string>
+    <string name="addon_update_policy_note">"ROM 更新時、追加パッケージは保持されます。削除済みのパッケージは再インストールされません。"</string>
+    <string name="addon_remove_title">"%1$sを削除しますか？"</string>
+    <string name="addon_remove_sony_note">"Sony の追加アプリを削除し、置き換えられた基本システムのアプリを復元します。その他のアプリや個人ファイルは対象外です。"</string>
+    <string name="addon_remove_google_note">"Google ログイン、Play ストア、Google の通知サービスを使用するアプリに影響する場合があります。その他のアプリや個人ファイルは対象外です。"</string>
+    <string name="addon_remove_data">"これらのアプリのデータも削除"</string>
+    <string name="addon_remove_data_note">"チェックしない場合、アプリのデータは保持されます。データの削除は取り消せません。"</string>
+    <string name="addon_remove_restart_note">"確認後、再起動時に削除します。適用前に取り消せます。"</string>
+    <string name="addon_remove_apply">"再起動して適用"</string>
+    <string name="addon_remove_ready">"削除パッケージを検証しました。再起動すると選択した追加パッケージを削除します。アプリデータの削除を選んだ場合、再起動前に消去します。"</string>
+    <string name="addon_remove_unavailable">"この ROM に対応する検証済みの削除パッケージがありません。削除は行っていません。"</string>
+    <string name="addon_remove_busy">"現在の追加パッケージ操作を完了またはキャンセルしてください。"</string>
+    <string name="addon_remove_failed">"削除が完了しませんでした。選択した追加パッケージは保留中です。詳細：%1$s"</string>
+    <string name="addon_remove_data_failed">"%1$s のデータを消去できませんでした。システムファイルの削除は開始していません。"</string>
+    <string name="addon_remove_success">"選択した追加パッケージを削除しました。"</string>
+    <string name="addon_remove_request_failed">"削除要求を準備できませんでした。システムファイルは削除していません。"</string>
+    <plurals name="addon_contents_count">
+        <item quantity="other">含まれるアプリ：%d 個</item>
+    </plurals>
+</resources>

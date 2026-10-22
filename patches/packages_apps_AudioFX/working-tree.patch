@@ -1,0 +1,25 @@
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index cb10936..79083ae 100644
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -18,6 +18,20 @@
+     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+     <uses-permission android:name="android.permission.VIBRATE" />
+ 
++    <!-- xz1c: Android 11+ package visibility hid other effect panels (e.g. Sony SoundEnhancement)
++         from ControlPanelPicker and the Redirector, so AudioFX could only pick itself. -->
++    <queries>
++        <intent>
++            <action android:name="android.media.action.DISPLAY_AUDIO_EFFECT_CONTROL_PANEL"/>
++        </intent>
++        <intent>
++            <action android:name="android.media.action.OPEN_AUDIO_EFFECT_CONTROL_SESSION"/>
++        </intent>
++        <intent>
++            <action android:name="android.media.action.CLOSE_AUDIO_EFFECT_CONTROL_SESSION"/>
++        </intent>
++    </queries>
++
+     <application
+             android:icon="@mipmap/ic_launcher"
+             android:allowBackup="false"

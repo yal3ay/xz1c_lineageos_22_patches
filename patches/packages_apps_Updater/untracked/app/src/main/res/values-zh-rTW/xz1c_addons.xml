@@ -1,0 +1,38 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="addon_sony_apps">"Sony 應用"</string>
+    <string name="addon_google_apps">"Google 應用"</string>
+    <string name="addon_section_title">"附加應用"</string>
+    <string name="addon_view_contents">"查看內容"</string>
+    <string name="addon_uninstall">"卸載"</string>
+    <string name="addon_uninstall_package">"卸載整個附加包"</string>
+    <string name="addon_install_action">"安裝"</string>
+    <string name="addon_state_installed">"已安裝"</string>
+    <string name="addon_state_missing">"未安裝"</string>
+    <string name="addon_remove_pending">"待卸載 · 重新啟動後套用"</string>
+    <string name="addon_cancel_remove">"取消卸載"</string>
+    <string name="addon_sony_summary">"獨立於基礎系統安裝的 Sony 應用。"</string>
+    <string name="addon_google_summary">"Google Play 商店與 Google 服務。"</string>
+    <string name="addon_back">"返回"</string>
+    <string name="addon_app_version">"版本 %1$s"</string>
+    <string name="addon_inventory_failed">"無法讀取附加包內容。"</string>
+    <string name="addon_update_policy">"隨系統更新保留"</string>
+    <string name="addon_update_policy_note">"更新 ROM 時保留已安裝的附加包，已卸載的不會自動裝回。"</string>
+    <string name="addon_remove_title">"卸載 %1$s？"</string>
+    <string name="addon_remove_sony_note">"移除這組 Sony 附加應用，並恢復被替換的基礎系統應用。其他應用和個人檔案不在移除範圍內。"</string>
+    <string name="addon_remove_google_note">"依賴 Google 登入、Play 商店或 Google 推播的應用可能受到影響。其他應用和個人檔案不在移除範圍內。"</string>
+    <string name="addon_remove_data">"一併刪除這組應用的資料"</string>
+    <string name="addon_remove_data_note">"未勾選時保留應用資料。刪除資料後無法復原。"</string>
+    <string name="addon_remove_restart_note">"確認後加入卸載清單，重新啟動時套用。套用前可以取消。"</string>
+    <string name="addon_remove_apply">"重新啟動並套用"</string>
+    <string name="addon_remove_ready">"卸載包已驗證。重新啟動以移除所選附加包；若選擇刪除應用資料，將在重新啟動前清除。"</string>
+    <string name="addon_remove_unavailable">"此 ROM 版本尚無匹配的已驗證卸載包，未執行卸載。"</string>
+    <string name="addon_remove_busy">"請先完成或取消目前的附加包操作。"</string>
+    <string name="addon_remove_failed">"卸載未完成，所選附加包仍在待處理清單中。詳情：%1$s"</string>
+    <string name="addon_remove_data_failed">"無法清除 %1$s 的資料，尚未開始移除系統檔案。"</string>
+    <string name="addon_remove_success">"所選附加包已卸載。"</string>
+    <string name="addon_remove_request_failed">"無法準備卸載要求，未移除系統檔案。"</string>
+    <plurals name="addon_contents_count">
+        <item quantity="other">包含 %d 個應用</item>
+    </plurals>
+</resources>

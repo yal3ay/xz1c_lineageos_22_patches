@@ -1,0 +1,80 @@
+From a3987b3df50a13d98d9eb7884aeecbd0c05a2b31 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 15 Oct 2026 12:46:31 +0800
+Subject: [PATCH] =?UTF-8?q?xz1c:=20=E9=96=8B=E6=A9=9F=E6=99=82=E6=8F=92?=
+ =?UTF-8?q?=E8=91=97=E8=80=B3=E6=A9=9F=EF=BC=8C=E6=8B=94=E6=8E=89=E5=BE=8C?=
+ =?UTF-8?q?=E9=80=9A=E8=A9=B1=E4=BB=8D=E8=83=BD=E5=88=87=E5=9B=9E=E8=81=BD?=
+ =?UTF-8?q?=E7=AD=92?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+開機時若插著有線耳機，CallAudioRouteController 只建立 WIRED 路由、
+不建立 EARPIECE 路由；拔掉耳機後 handleWiredHeadsetDisconnected() 找不到
+聽筒路由，通話只剩擴音（supportedRouteMask: SPEAKER），直到重開機。
+現在聽筒路由一律建立，耳機在時先不列為可用。
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I344220098b2fac5eef36e68b202845030a7224c0
+---
+ .../telecom/CallAudioRouteController.java     | 34 +++++++++++--------
+ 1 file changed, 20 insertions(+), 14 deletions(-)
+
+diff --git a/src/com/android/server/telecom/CallAudioRouteController.java b/src/com/android/server/telecom/CallAudioRouteController.java
+index 0be018407..07b24dcf6 100644
+--- a/src/com/android/server/telecom/CallAudioRouteController.java
++++ b/src/com/android/server/telecom/CallAudioRouteController.java
+@@ -419,15 +419,21 @@ public class CallAudioRouteController implements CallAudioRouteAdapter {
+                 mTypeRoutes.put(AudioRoute.TYPE_WIRED, mEarpieceWiredRoute);
+                 updateAvailableRoutes(mEarpieceWiredRoute, true);
+             }
+-        } else if ((supportMask & CallAudioState.ROUTE_EARPIECE) != 0) {
+-            // Create earpiece routes
+-            mEarpieceWiredRoute = mAudioRouteFactory.create(AudioRoute.TYPE_EARPIECE, null,
++        }
++        if ((supportMask & CallAudioState.ROUTE_EARPIECE) != 0) {
++            // Create earpiece routes. xz1c: always register the earpiece route, even when a
++            // wired headset is plugged in at boot; otherwise handleWiredHeadsetDisconnected()
++            // finds no TYPE_EARPIECE route and calls stay on speaker until reboot.
++            AudioRoute earpieceRoute = mAudioRouteFactory.create(AudioRoute.TYPE_EARPIECE, null,
+                     mAudioManager);
+-            if (mEarpieceWiredRoute == null) {
++            if (earpieceRoute == null) {
+                 Log.w(this, "Can't find available audio device info for route TYPE_EARPIECE");
+             } else {
+-                mTypeRoutes.put(AudioRoute.TYPE_EARPIECE, mEarpieceWiredRoute);
+-                updateAvailableRoutes(mEarpieceWiredRoute, true);
++                mTypeRoutes.put(AudioRoute.TYPE_EARPIECE, earpieceRoute);
++                if (mEarpieceWiredRoute == null) {
++                    mEarpieceWiredRoute = earpieceRoute;
++                    updateAvailableRoutes(earpieceRoute, true);
++                }
+             }
+         }
+ 
+@@ -1314,14 +1320,14 @@ public class CallAudioRouteController implements CallAudioRouteAdapter {
+ 
+         if (mWiredHeadsetManager.isPluggedIn()) {
+             routeMask |= CallAudioState.ROUTE_WIRED_HEADSET;
+-        } else {
+-            AudioDeviceInfo[] deviceList = mAudioManager.getDevices(
+-                    AudioManager.GET_DEVICES_OUTPUTS);
+-            for (AudioDeviceInfo device: deviceList) {
+-                if (device.getType() == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
+-                    routeMask |= CallAudioState.ROUTE_EARPIECE;
+-                    break;
+-                }
++        }
++        // xz1c: report the earpiece regardless of the headset, see initializeRoutes().
++        AudioDeviceInfo[] deviceList = mAudioManager.getDevices(
++                AudioManager.GET_DEVICES_OUTPUTS);
++        for (AudioDeviceInfo device: deviceList) {
++            if (device.getType() == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
++                routeMask |= CallAudioState.ROUTE_EARPIECE;
++                break;
+             }
+         }
+         return routeMask;
+-- 
+2.43.0
+

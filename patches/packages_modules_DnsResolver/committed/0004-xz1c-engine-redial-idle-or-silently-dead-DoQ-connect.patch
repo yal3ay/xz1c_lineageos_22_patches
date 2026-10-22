@@ -1,0 +1,207 @@
+From f161e924f09ba838135627421011c2114746b51e Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Mon, 5 Oct 2026 09:23:17 +0800
+Subject: [PATCH 4/4] xz1c-engine: redial idle or silently dead DoQ connections
+
+Guest and mobile NATs drop idle UDP mappings long before the QUIC
+30 s idle timeout, so a pooled DoQ connection could look alive while
+every packet was lost; the next query then failed with "no recent
+network activity" (3/40 on a guest Wi-Fi).
+
+Stop reusing DoQ connections idle for more than 15 s, and retry once on
+a fresh connection when a reused one fails, as DoT already does.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: Icc40d6cfc57f3fe649dd4c45525c70755e01f65d
+---
+ xz1c-engine/engine.go           | 75 +++++++++++++++++++++++++++------
+ xz1c-engine/engine_test.go      | 34 +++++++++++++++
+ xz1c-engine/prebuilt/SHA256SUMS |  4 +-
+ 3 files changed, 98 insertions(+), 15 deletions(-)
+
+diff --git a/xz1c-engine/engine.go b/xz1c-engine/engine.go
+index d0ce65ed..a8be9373 100644
+--- a/xz1c-engine/engine.go
++++ b/xz1c-engine/engine.go
+@@ -34,6 +34,9 @@ const maxDNSMessage = 65535
+ const (
+  maxTLSConns = 4
+  tlsIdleLimit = 20 * time.Second
++ // NATs on guest and mobile networks drop idle UDP mappings well before QUIC's idle timeout,
++ // leaving a connection that looks alive but loses every packet. Redial instead of reusing it.
++ quicIdleLimit = 15 * time.Second
+ )
+ 
+ type idleTLS struct {
+@@ -53,6 +56,7 @@ type engine struct {
+  mu sync.Mutex
+  transports map[string]*quic.Transport
+  connections map[string]*quic.Conn
++ lastUsed map[string]time.Time
+  tlsMu sync.Mutex
+  tlsIdle []idleTLS
+  tlsClosed bool
+@@ -85,6 +89,7 @@ func newEngine(protocol, host string, ips []net.IP, port int, roots *x509.CertPo
+   endpoint: "https://"+host+"/dns-query",
+   ctx: ctx, cancel: cancel, control: control, tlsSlots: make(chan struct{}, maxTLSConns),
+   transports: make(map[string]*quic.Transport), connections: make(map[string]*quic.Conn),
++  lastUsed: make(map[string]time.Time),
+   tlsConfig: &tls.Config{ServerName: host, RootCAs: roots, MinVersion: tls.VersionTLS12,
+    ClientSessionCache: tls.NewLRUClientSessionCache(8)}}
+  switch protocol {
+@@ -352,44 +357,88 @@ func exchangeTLS(ctx context.Context, conn net.Conn, query []byte) ([]byte, erro
+  return answer, nil
+ }
+ 
+-func (e *engine) doqConnection(ctx context.Context, ip net.IP) (*quic.Conn, error) {
++// doqConnection returns a live pooled connection (reused=true) or dials a new one.
++func (e *engine) doqConnection(ctx context.Context, ip net.IP) (*quic.Conn, bool, error) {
+  address := e.address(ip)
+  e.mu.Lock()
+  existing := e.connections[address]
++ if existing != nil && existing.Context().Err() == nil && time.Since(e.lastUsed[address]) < quicIdleLimit {
++  e.mu.Unlock()
++  return existing, true, nil
++ }
++ if existing != nil {
++  existing.CloseWithError(0, "idle")
++  delete(e.connections, address)
++ }
+  e.mu.Unlock()
+- if existing != nil && existing.Context().Err() == nil { return existing, nil }
+  tr, addr, err := e.transport(ip)
+- if err != nil { return nil, err }
++ if err != nil { return nil, false, err }
+  cfg := e.tlsConfig.Clone()
+  cfg.MinVersion = tls.VersionTLS13
+  cfg.NextProtos = []string{"doq"}
+  conn, err := tr.Dial(ctx, addr, cfg, e.quicConfig())
+- if err != nil { return nil, err }
++ if err != nil { return nil, false, err }
+  e.mu.Lock()
+  defer e.mu.Unlock()
+- if e.ctx.Err() != nil { conn.CloseWithError(0, "closed"); return nil, e.ctx.Err() }
++ if e.ctx.Err() != nil { conn.CloseWithError(0, "closed"); return nil, false, e.ctx.Err() }
+  if existing = e.connections[address]; existing != nil && existing.Context().Err() == nil {
+   conn.CloseWithError(0, "duplicate connection")
+-  return existing, nil
++  return existing, true, nil
+  }
+  e.connections[address] = conn
+- return conn, nil
++ e.lastUsed[address] = time.Now()
++ return conn, false, nil
++}
++
++func (e *engine) dropQUIC(ip net.IP, conn *quic.Conn) {
++ address := e.address(ip)
++ e.mu.Lock()
++ defer e.mu.Unlock()
++ if e.connections[address] == conn { delete(e.connections, address) }
++ conn.CloseWithError(0, "failed")
+ }
+ 
+ func (e *engine) queryQUIC(ctx context.Context, query []byte) ([]byte, error) {
+  var last error
+  for _, ip := range e.ips {
+-  attempt, cancel := context.WithTimeout(ctx, 4*time.Second)
+-  conn, err := e.doqConnection(attempt, ip)
+-  if err == nil { var answer []byte; answer, err = exchangeQUIC(attempt, conn, query)
+-   if err == nil { cancel(); return answer, nil }
+-  }
+-  cancel(); last = err
++  answer, err := e.queryQUICOnce(ctx, ip, query)
++  if err == nil { return answer, nil }
++  last = err
+   if ctx.Err() != nil { break }
+  }
+  return nil, last
+ }
+ 
++func (e *engine) queryQUICOnce(ctx context.Context, ip net.IP, query []byte) ([]byte, error) {
++ attempt, cancel := context.WithTimeout(ctx, 4*time.Second)
++ conn, reused, err := e.doqConnection(attempt, ip)
++ if err == nil {
++  var answer []byte
++  if answer, err = exchangeQUIC(attempt, conn, query); err == nil {
++   cancel()
++   e.markUsed(ip)
++   return answer, nil
++  }
++  e.dropQUIC(ip, conn)
++ }
++ cancel()
++ if !reused || ctx.Err() != nil || e.ctx.Err() != nil { return nil, err }
++ // The pooled connection died silently; DNS queries are idempotent, so retry on a fresh one.
++ attempt, cancel = context.WithTimeout(ctx, 4*time.Second)
++ defer cancel()
++ if conn, _, err = e.doqConnection(attempt, ip); err != nil { return nil, err }
++ answer, err := exchangeQUIC(attempt, conn, query)
++ if err != nil { e.dropQUIC(ip, conn); return nil, err }
++ e.markUsed(ip)
++ return answer, nil
++}
++
++func (e *engine) markUsed(ip net.IP) {
++ e.mu.Lock()
++ e.lastUsed[e.address(ip)] = time.Now()
++ e.mu.Unlock()
++}
++
+ func exchangeQUIC(ctx context.Context, conn *quic.Conn, query []byte) ([]byte, error) {
+  stream, err := conn.OpenStreamSync(ctx)
+  if err != nil { return nil, err }
+diff --git a/xz1c-engine/engine_test.go b/xz1c-engine/engine_test.go
+index 77673a31..6c5693ea 100644
+--- a/xz1c-engine/engine_test.go
++++ b/xz1c-engine/engine_test.go
+@@ -259,3 +259,37 @@ func TestDoTParallelQueries(t *testing.T) {
+  if elapsed >= queries*delay/2 { t.Fatalf("queries were not parallel: %v", elapsed) }
+  if maxOpen.Load() > maxTLSConns { t.Fatalf("opened %d connections, limit %d", maxOpen.Load(), maxTLSConns) }
+ }
++
++// A pooled DoQ connection whose path silently died (NAT mapping dropped) must not fail the query:
++// the server answers only the first stream on each connection, like a path that goes dark.
++func TestDoQRetriesSilentlyDeadConnection(t *testing.T) {
++ query := testQuery(t)
++ cert, roots := testCertificate(t)
++ listener, err := quic.ListenAddr("127.0.0.1:0",
++  &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"doq"}}, nil)
++ if err != nil { t.Fatal(err) }
++ defer listener.Close()
++ var accepted atomic.Int32
++ go func() {
++  for {
++   conn, err := listener.Accept(context.Background()); if err != nil { return }
++   accepted.Add(1)
++   go func() {
++    stream, err := conn.AcceptStream(context.Background()); if err != nil { return }
++    packet, err := io.ReadAll(stream); if err != nil || len(packet) < 14 { return }
++    packet[4] |= 0x80; stream.Write(packet); stream.Close()
++    // Later streams on this connection are never answered.
++   }()
++  }
++ }()
++ port := listener.Addr().(*net.UDPAddr).Port
++ e, err := newEngine("doq", "example.com", []net.IP{net.ParseIP("127.0.0.1")}, port, roots, nil)
++ if err != nil { t.Fatal(err) }
++ defer e.close()
++ for i := 0; i < 2; i++ {
++  ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
++  _, err := e.query(ctx, query); cancel()
++  if err != nil { t.Fatalf("query %d: %v", i, err) }
++ }
++ if accepted.Load() < 2 { t.Fatalf("expected a fresh connection for the retry, got %d", accepted.Load()) }
++}
+diff --git a/xz1c-engine/prebuilt/SHA256SUMS b/xz1c-engine/prebuilt/SHA256SUMS
+index e1580242..b993ccc1 100644
+--- a/xz1c-engine/prebuilt/SHA256SUMS
++++ b/xz1c-engine/prebuilt/SHA256SUMS
+@@ -1,2 +1,2 @@
+-d5b5e739f60fde905c7fc95014d1a1b337796af6f0635fb4c1aa73dc7123e95e  prebuilt/arm64/libxz1c_dns_engine.so
+-362a594c145623c1765353a54023cb64eebcf7b4f440b25e7de0e4977d7a4bec  prebuilt/arm/libxz1c_dns_engine.so
++cfa91f2ec5d0bc1ab7e50ad0bb0a8e53585bbf6fb44855400e13e1098ef95165  prebuilt/arm64/libxz1c_dns_engine.so
++755053221b830425aab9f319116e2881617bfff1e6aed1eff9b478416fe0ad3e  prebuilt/arm/libxz1c_dns_engine.so
+-- 
+2.43.0
+

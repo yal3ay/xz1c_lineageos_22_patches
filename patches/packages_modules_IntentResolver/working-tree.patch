@@ -1,0 +1,27 @@
+diff --git a/java/src/com/android/intentresolver/platform/NearbyShareModule.kt b/java/src/com/android/intentresolver/platform/NearbyShareModule.kt
+index 1e4b5241..68ff4616 100644
+--- a/java/src/com/android/intentresolver/platform/NearbyShareModule.kt
++++ b/java/src/com/android/intentresolver/platform/NearbyShareModule.kt
+@@ -38,11 +38,15 @@ object NearbyShareModule {
+     @Provides
+     @Singleton
+     @NearbyShare
+-    fun nearbyShareComponent(@ApplicationOwned resources: Resources, settings: SecureSettings) =
+-        Optional.ofNullable(
+-            ComponentName.unflattenFromString(
+-                settings.getStringOrNull(NEARBY_SHARING_COMPONENT)?.ifEmpty { null }
+-                    ?: resources.getString(R.string.config_defaultNearbySharingComponent),
+-            )
+-        )
++    fun nearbyShareComponent(@ApplicationOwned resources: Resources, settings: SecureSettings): Optional<ComponentName> {
++        val fallback = resources.getString(R.string.config_defaultNearbySharingComponent)
++        val configured = settings.getStringOrNull(NEARBY_SHARING_COMPONENT)?.ifEmpty { null }
++        // GApps may have populated the old Google entry. The built-in chooser offers both
++        // Mac AirDrop and the original Google Quick Share action; retain custom providers.
++        val useBuiltIn = ComponentName.unflattenFromString(fallback)?.packageName == "com.xz1c.airdrop" &&
++            configured?.let { ComponentName.unflattenFromString(it)?.packageName == "com.google.android.gms" } == true
++        return Optional.ofNullable(ComponentName.unflattenFromString(
++            if (useBuiltIn) fallback else configured ?: fallback
++        ))
++    }
+ }

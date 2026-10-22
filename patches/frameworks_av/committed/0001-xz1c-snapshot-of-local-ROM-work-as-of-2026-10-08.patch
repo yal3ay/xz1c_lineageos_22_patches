@@ -1,0 +1,86 @@
+From dd378573d0f5f92829a1367a0e2428f2f8aa93a7 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:22 +0800
+Subject: [PATCH] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I37d9fbfe325d48ffa0cc82beb3b2a6e94881396b
+---
+ .../device3/Camera3Device.cpp                 | 52 +++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+
+diff --git a/services/camera/libcameraservice/device3/Camera3Device.cpp b/services/camera/libcameraservice/device3/Camera3Device.cpp
+index 712f6908cf..0f5e3c265d 100644
+--- a/services/camera/libcameraservice/device3/Camera3Device.cpp
++++ b/services/camera/libcameraservice/device3/Camera3Device.cpp
+@@ -2187,6 +2187,56 @@ sp<Camera3Device::CaptureRequest> Camera3Device::createCaptureRequest(
+     sp<CaptureRequest> newRequest = new CaptureRequest();
+     newRequest->mSettingsList = request;
+ 
++    // 【本项目】把设备不支持的「带闪光灯」自动曝光模式降级为普通 AE_MODE_ON。
++    //
++    // 2026-09-24 实测：抖音人脸识别给 XZ1C 前摄发 AE_MODE_ON_AUTO_FLASH(2)，而前摄
++    // aeAvailableModes 只有 [ON(1)]、flash.info.available=FALSE。索尼 HAL 不是忽略这个
++    // 越界值，而是在第 0 帧报 "Invalid settings for capture"，返回 -38，整个会话报错，
++    // 抖音那边就是一直黑屏。
++    //
++    // 范围严格限定：只处理 2~5 这几个闪光灯相关模式、只在该模式不在设备声明列表里、
++    // 且设备声明了 ON 时才改。其余一切照原样交给 HAL，不吞任何 HAL 错误。
++    {
++        CameraMetadata &settings = newRequest->mSettingsList.begin()->metadata;
++        camera_metadata_entry_t ae = settings.find(ANDROID_CONTROL_AE_MODE);
++        if (ae.count > 0 && ae.data.u8[0] > ANDROID_CONTROL_AE_MODE_ON) {
++            camera_metadata_entry_t avail = mDeviceInfo.find(ANDROID_CONTROL_AE_AVAILABLE_MODES);
++            bool supported = false, hasOn = false;
++            for (size_t i = 0; i < avail.count; i++) {
++                if (avail.data.u8[i] == ae.data.u8[0]) supported = true;
++                if (avail.data.u8[i] == ANDROID_CONTROL_AE_MODE_ON) hasOn = true;
++            }
++            if (!supported && hasOn) {
++                ALOGW("Camera %s: AE mode %d unsupported by device, downgrading to ON",
++                        mId.c_str(), ae.data.u8[0]);
++                const uint8_t on = ANDROID_CONTROL_AE_MODE_ON;
++                settings.update(ANDROID_CONTROL_AE_MODE, &on, 1);
++            }
++        }
++
++        // 同理处理白平衡：抖音「炫彩活体」检测中途会关掉自动白平衡（AWB_MODE_OFF=0）
++        // 并手动设颜色增益，以便看清屏幕闪色在人脸上的反射。XZ1C 前摄 awbAvailableModes
++        // 为 [1 2 3 5 6]、没有 MANUAL_POST_PROCESSING 能力，索尼 HAL 报
++        // "Unsupported awb mode 0" 并拒绝该帧（实测第 241 帧），会话再次中断。
++        // 不支持时降级为 AUTO；同样只在设备声明了 AUTO 时才改。
++        camera_metadata_entry_t awb = settings.find(ANDROID_CONTROL_AWB_MODE);
++        if (awb.count > 0) {
++            camera_metadata_entry_t avail =
++                    mDeviceInfo.find(ANDROID_CONTROL_AWB_AVAILABLE_MODES);
++            bool supported = false, hasAuto = false;
++            for (size_t i = 0; i < avail.count; i++) {
++                if (avail.data.u8[i] == awb.data.u8[0]) supported = true;
++                if (avail.data.u8[i] == ANDROID_CONTROL_AWB_MODE_AUTO) hasAuto = true;
++            }
++            if (!supported && hasAuto) {
++                ALOGW("Camera %s: AWB mode %d unsupported by device, downgrading to AUTO",
++                        mId.c_str(), awb.data.u8[0]);
++                const uint8_t autoMode = ANDROID_CONTROL_AWB_MODE_AUTO;
++                settings.update(ANDROID_CONTROL_AWB_MODE, &autoMode, 1);
++            }
++        }
++    }
++
+     camera_metadata_entry_t inputStreams =
+             newRequest->mSettingsList.begin()->metadata.find(ANDROID_REQUEST_INPUT_STREAMS);
+     if (inputStreams.count > 0) {
+@@ -3433,6 +3483,8 @@ void Camera3Device::RequestThread::checkAndStopRepeatingRequest() {
+     }
+ }
+ 
++
++
+ bool Camera3Device::RequestThread::sendRequestsBatch() {
+     ATRACE_CALL();
+     status_t res;
+-- 
+2.43.0
+

@@ -1,0 +1,1760 @@
+From 403929a7546966aff633dcbb3c2e1d6e62593ca1 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 8 Oct 2026 15:26:16 +0800
+Subject: [PATCH 3/3] xz1c: snapshot of local ROM work as of 2026-10-08
+
+Local-only commit (not for upload). Backup files (*.bak, *.orig, *.pre*) excluded.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I4382ec257353010f08a27f80954eff959438ede2
+---
+ AndroidManifest.xml                           |   6 +
+ res/values-zh-rCN/cm_arrays.xml               |  15 +
+ res/values-zh-rCN/cm_strings.xml              |  61 ++
+ res/values-zh-rCN/strings.xml                 |   6 +-
+ res/values/cm_arrays.xml                      |  21 +
+ res/values/cm_strings.xml                     |  62 ++
+ res/xml/autostart_manager.xml                 |   7 +
+ res/xml/dexopt_manager.xml                    |   6 +
+ res/xml/display_settings.xml                  |   3 +-
+ res/xml/nfc_and_payment_settings.xml          |   7 +
+ res/xml/power_usage_summary.xml               |  44 ++
+ .../fuelgauge/AutoStartManagerFragment.java   | 441 ++++++++++++++
+ .../fuelgauge/DexOptManagerFragment.java      | 338 +++++++++++
+ .../settings/nfc/AccessCardsActivity.java     |  26 +
+ .../settings/nfc/AccessCardsFragment.java     | 557 ++++++++++++++++++
+ 15 files changed, 1596 insertions(+), 4 deletions(-)
+ create mode 100644 res/values-zh-rCN/cm_arrays.xml
+ create mode 100644 res/values/cm_arrays.xml
+ create mode 100644 res/xml/autostart_manager.xml
+ create mode 100644 res/xml/dexopt_manager.xml
+ create mode 100644 src/com/android/settings/fuelgauge/AutoStartManagerFragment.java
+ create mode 100644 src/com/android/settings/fuelgauge/DexOptManagerFragment.java
+ create mode 100644 src/com/android/settings/nfc/AccessCardsActivity.java
+ create mode 100644 src/com/android/settings/nfc/AccessCardsFragment.java
+
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index 3b74b931ea9..a6f6a350d96 100644
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -4710,6 +4710,12 @@
+             android:exported="true"
+             android:permission="android.permission.DUMP" />
+ 
++        <!-- 【本项目】门禁卡管理页直达入口（SystemUI 的 NFC 磁贴长按打开），见 nfc/AccessCardsActivity -->
++        <activity
++            android:name=".nfc.AccessCardsActivity"
++            android:label="@string/nfc_access_cards_title"
++            android:exported="true" />
++
+         <!-- Quick Settings tiles for Developer Options -->
+         <service
+             android:name=".development.qstile.DevelopmentTiles$ShowLayout"
+diff --git a/res/values-zh-rCN/cm_arrays.xml b/res/values-zh-rCN/cm_arrays.xml
+new file mode 100644
+index 00000000000..624ea261ac2
+--- /dev/null
++++ b/res/values-zh-rCN/cm_arrays.xml
+@@ -0,0 +1,15 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string-array name="bg_force_stop_timeout_entries">
++        <item>关闭</item>
++        <item>5 分钟</item>
++        <item>10 分钟</item>
++        <item>15 分钟</item>
++        <item>30 分钟</item>
++        <item>1 小时</item>
++    </string-array>
++    <string-array name="bg_force_stop_mode_entries">
++        <item>强制停止（不能自启动）</item>
++        <item>只杀进程（推送仍可唤醒）</item>
++    </string-array>
++</resources>
+diff --git a/res/values-zh-rCN/cm_strings.xml b/res/values-zh-rCN/cm_strings.xml
+index 15eb2b9b8d7..8fcaeba0664 100644
+--- a/res/values-zh-rCN/cm_strings.xml
++++ b/res/values-zh-rCN/cm_strings.xml
+@@ -107,4 +107,65 @@
+     <string name="battery_design_capacity_summary">%1$d mAh</string>
+     <string name="battery_maximum_capacity">最大容量</string>
+     <string name="battery_maximum_capacity_summary">%1$d mAh (%2$d%%)</string>
++    <string name="swipe_away_force_stop_title">划掉即彻底退出</string>
++    <string name="swipe_away_force_stop_summary">从最近任务划掉应用时将其强制停止，使其无法自启动回到后台。电池用量设为「无限制」的应用、正在运行前台服务的应用、当前输入法与桌面不会被停止。</string>
++    <string name="bg_force_stop_timeout_title">后台应用自动清理</string>
++    <string name="bg_force_stop_mode_title">清理方式</string>
++    <string name="bg_trim_cached_procs_title">同时清理「无限制」应用的闲置进程</string>
++    <string name="bg_trim_cached_procs_summary">即使应用的电池用量设为「无限制」，也清理它已经闲置的缓存进程。适合微信这类应用：小程序等辅助进程白占内存，而维持推送连接的进程不受影响。</string>
++    <!-- 自启动管理 -->
++    <string name="autostart_manager_title">自启动管理</string>
++    <string name="autostart_manager_summary">选择哪些应用可以在开机时自动启动</string>
++    <string name="autostart_manager_footer">%2$d 个应用中有 %1$d 个可以自我拉起。
++
++关闭后会切断它自我拉起的三条路：开机广播、假账号认证器（系统为了枚举账号必须绑定它，于是把它钉在内存里不回收）、同步适配器（同步框架定时唤醒，绕过电池优化）。本机实测某应用商店：原本 3 个进程 502 MB 且不可回收，关闭后重启为 0。
++
++只列出第三方应用。系统应用不是靠开机广播启动的，这个开关对它们没有效果。
++
++挡不住别的应用主动调用它（分享、支付回调等）。消息与通知可能要等你打开应用后才收到。</string>
++    <string name="autostart_blocked_by_system">%1$s \u00b7 已由系统拦截（应用自行恢复了接收器）</string>
++    <!-- 应用预编译 -->
++    <string name="dexopt_manager_title">应用预编译</string>
++    <string name="dexopt_manager_summary">选择每个应用的提前编译方式</string>
++    <string name="dexopt_state_fmt">%1$s \u00b7 %2$s</string>
++    <string name="dexopt_state_unknown">未知</string>
++    <string name="dexopt_filter_verify">verify \u2014 不编译，占用最小</string>
++    <string name="dexopt_filter_speed_profile">speed-profile \u2014 按热点编译（推荐）</string>
++    <string name="dexopt_filter_speed">speed \u2014 全量 AOT，体积大很多且往往更慢</string>
++    <string name="dexopt_start">开始编译</string>
++    <string name="dexopt_running_title">正在编译</string>
++    <string name="dexopt_running_fmt">%1$s \u2192 %2$s\n\n已用 %3$d 秒。\n\nART 对单个应用不提供细粒度进度，因此只显示已用时间。请不要离开此页面。</string>
++    <string name="dexopt_result_ok">完成，耗时 %1$d 秒。\n\n当前状态：%2$s</string>
++    <string name="dexopt_result_fail">失败。当前状态：%1$s</string>
++    <string name="dexopt_result_no_profile">你选的是 speed-profile，但结果是 verify：该应用还没有使用画像（profile），ART 会静默退回。先正常使用一段时间再来编译。</string>
++    <string name="dexopt_manager_footer">%2$d 个应用中有 %1$d 个已编译（speed-profile 或 speed）。\n\n只列出第三方应用；系统应用的编译方式在构建期就定好了。\n\n本机实测（微信，195 MB 安装包）：verify 5.8 MB / 冷启动 1572 毫秒；speed-profile 44.6 MB / 1597 毫秒；speed 711 MB / 1798 毫秒。全量 AOT 在这台机器上大 16 倍且更慢，所以通常选 speed-profile。</string>
++    <!-- 【本项目】系统内置门禁卡 -->
++    <string name="nfc_access_cards_title">门禁卡</string>
++    <string name="nfc_access_cards_summary">系统内置卡模拟，无需应用和 root</string>
++    <string name="nfc_access_card_default_name">门禁卡</string>
++    <string name="nfc_access_card_hint_on">点一张卡即可切换。亮屏、熄屏都能刷，把手机背面贴近读卡器即可。长按卡片可编辑。</string>
++    <string name="nfc_access_card_hint_off">模拟已关闭。点一张卡即可开启。</string>
++    <string name="nfc_access_card_applied_toast">已切换，NFC 重启中，约 2 秒后可用</string>
++    <string name="nfc_access_card_disabled_toast">已关闭门禁卡模拟</string>
++    <string name="nfc_access_card_disable">关闭</string>
++    <string name="nfc_access_card_disable_confirm">停止模拟这张卡？</string>
++    <string name="nfc_access_card_add">+ 添加门禁卡</string>
++    <string name="nfc_access_card_rename_edit">编辑</string>
++    <string name="nfc_access_card_change_color">换个颜色</string>
++    <string name="nfc_access_card_delete">删除</string>
++    <string name="nfc_access_card_delete_confirm">删除这张卡？</string>
++    <string name="nfc_access_card_name_hint">名称（例如：小区、公司）</string>
++    <string name="nfc_access_card_uid_hint">卡号（UID），例如 04 A1 B2 C3</string>
++    <string name="nfc_access_card_uid_invalid">请输入 4、7 或 10 字节的十六进制卡号</string>
++    <string name="nfc_access_card_read">贴实体卡读取卡号</string>
++    <string name="nfc_access_card_read_prompt">把实体门禁卡贴在手机背面……</string>
++    <string name="nfc_access_card_read_ok">已读取卡号</string>
++    <string name="nfc_access_card_read_fail">没读到可用的卡号</string>
++    <string name="nfc_access_card_nfc_off">请先打开 NFC</string>
++    <string name="autostart_mech_boot">开机广播</string>
++    <string name="autostart_mech_account">账号认证器</string>
++    <string name="autostart_mech_sync">同步适配器</string>
++    <string name="autostart_has_real_accounts">此应用有真实账号：\n\n%1$s\n\n它注册了账号认证器 —— 这既是账号同步的机制，也是应用保活的手段。全部关闭会中断这些账号的同步。</string>
++    <string name="autostart_boot_only">只挡开机自启</string>
++    <string name="autostart_block_all">全部关闭</string>
+ </resources>
+diff --git a/res/values-zh-rCN/strings.xml b/res/values-zh-rCN/strings.xml
+index b663a2bd2f5..30fe26bf1ae 100644
+--- a/res/values-zh-rCN/strings.xml
++++ b/res/values-zh-rCN/strings.xml
+@@ -3184,9 +3184,9 @@
+     <string name="cell_broadcast_settings" msgid="2416980110093867199">"无线紧急警报"</string>
+     <string name="network_operators_settings" msgid="5105453353329748954">"网络运营商"</string>
+     <string name="access_point_names" msgid="5768430498022188057">"接入点名称(APN)"</string>
+-    <string name="enhanced_4g_lte_mode_title" msgid="6624700245232361149">"VoLTE"</string>
+-    <string name="enhanced_4g_lte_mode_title_advanced_calling" msgid="7066009898031465265">"高级通话"</string>
+-    <string name="enhanced_4g_lte_mode_title_4g_calling" msgid="7445853566718786195">"4G 通话"</string>
++    <string name="enhanced_4g_lte_mode_title" msgid="6624700245232361149">"4G 高清通话"</string>
++    <string name="enhanced_4g_lte_mode_title_advanced_calling" msgid="7066009898031465265">"4G 高清通话"</string>
++    <string name="enhanced_4g_lte_mode_title_4g_calling" msgid="7445853566718786195">"4G 高清通话"</string>
+     <string name="enhanced_4g_lte_mode_summary" msgid="1067066329756036427">"使用 LTE 服务提升语音通话质量（推荐）"</string>
+     <string name="enhanced_4g_lte_mode_summary_4g_calling" msgid="2575004054914178405">"使用 4G 服务提升语音通话质量（推荐）"</string>
+     <string name="nr_advanced_calling_title" msgid="6106286679535355939">"Vo5G"</string>
+diff --git a/res/values/cm_arrays.xml b/res/values/cm_arrays.xml
+new file mode 100644
+index 00000000000..df6f97abe00
+--- /dev/null
++++ b/res/values/cm_arrays.xml
+@@ -0,0 +1,21 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string-array name="bg_force_stop_timeout_entries">
++        <item>Off</item>
++        <item>5 minutes</item>
++        <item>10 minutes</item>
++        <item>15 minutes</item>
++        <item>30 minutes</item>
++        <item>1 hour</item>
++    </string-array>
++    <string-array name="bg_force_stop_timeout_values" translatable="false">
++        <item>0</item><item>5</item><item>10</item><item>15</item><item>30</item><item>60</item>
++    </string-array>
++    <string-array name="bg_force_stop_mode_entries">
++        <item>Force stop (cannot restart itself)</item>
++        <item>Kill processes only (push can still wake it)</item>
++    </string-array>
++    <string-array name="bg_force_stop_mode_values" translatable="false">
++        <item>0</item><item>1</item>
++    </string-array>
++</resources>
+diff --git a/res/values/cm_strings.xml b/res/values/cm_strings.xml
+index b3e7df2a079..f191c98a97e 100644
+--- a/res/values/cm_strings.xml
++++ b/res/values/cm_strings.xml
+@@ -197,4 +197,66 @@
+     <string name="battery_maximum_capacity">Maximum capacity</string>
+     <string name="battery_maximum_capacity_summary">%1$d mAh (%2$d%%)</string>
+     <string name="battery_maximum_capacity_not_available" translatable="false">@string/battery_cycle_count_not_available</string>
++    <!-- Swipe away to fully exit -->
++    <string name="swipe_away_force_stop_title">Swipe away to fully exit</string>
++    <string name="swipe_away_force_stop_summary">Force stop an app when its task is swiped from Recents, so it cannot restart itself in the background. Apps set to Unrestricted battery usage, apps running a foreground service, the current keyboard and launcher are never stopped.</string>
++    <string name="bg_force_stop_timeout_title">Auto-stop background apps</string>
++    <string name="bg_force_stop_mode_title">Cleanup method</string>
++    <string name="bg_trim_cached_procs_title">Also trim idle processes of unrestricted apps</string>
++    <string name="bg_trim_cached_procs_summary">Kill cached, idle processes even in apps set to Unrestricted battery usage. Useful for messaging apps whose mini-program or helper processes waste memory; the process holding the push connection is not affected.</string>
++    <!-- 自启动管理 -->
++    <string name="autostart_manager_title">Auto-start manager</string>
++    <string name="autostart_manager_summary">Choose which apps may start themselves when the device boots</string>
++    <string name="autostart_manager_footer">%1$d of %2$d apps may start themselves.
++
++Turning an app off cuts three paths it can use to start itself: the boot broadcast, a fake account authenticator (the system must bind it to enumerate accounts, which pins the app in memory), and a sync adapter (the sync framework wakes it on a timer, bypassing battery optimization). Measured here on one app store: 3 processes and 502 MB pinned as unreclaimable, down to 0 after a reboot.
++
++Only third-party apps are listed. System apps are not started by the boot broadcast, so this would have no effect on them.
++
++This cannot stop an app that another app calls into (sharing, payment callbacks). Messages and notifications may be delayed until you open the app.</string>
++    <string name="autostart_blocked_by_system">%1$s \u00b7 blocked by the system (the app re-enabled its own receiver)</string>
++    <!-- 应用预编译 -->
++    <string name="dexopt_manager_title">App precompilation</string>
++    <string name="dexopt_manager_summary">Choose how each app is compiled ahead of time</string>
++    <string name="dexopt_state_fmt">%1$s \u00b7 %2$s</string>
++    <string name="dexopt_state_unknown">unknown</string>
++    <string name="dexopt_filter_verify">verify \u2014 not compiled, smallest</string>
++    <string name="dexopt_filter_speed_profile">speed-profile \u2014 compile the hot paths (recommended)</string>
++    <string name="dexopt_filter_speed">speed \u2014 full AOT, much larger and often slower</string>
++    <string name="dexopt_start">Compile</string>
++    <string name="dexopt_running_title">Compiling</string>
++    <string name="dexopt_running_fmt">%1$s \u2192 %2$s\n\n%3$d s elapsed.\n\nART reports no fine-grained progress for a single package, so only the elapsed time is shown. Do not leave this screen.</string>
++    <string name="dexopt_result_ok">Done in %1$d s.\n\nCurrent state: %2$s</string>
++    <string name="dexopt_result_fail">Failed. Current state: %1$s</string>
++    <string name="dexopt_result_no_profile">You chose speed-profile but the result is verify: this app has no usage profile yet, and ART silently falls back. Use the app for a while, then try again.</string>
++    <string name="dexopt_manager_footer">%1$d of %2$d apps are compiled (speed-profile or speed).\n\nOnly third-party apps are listed; system apps are decided at build time.\n\nMeasured on this device (WeChat, 195 MB apk): verify 5.8 MB / cold 1572 ms; speed-profile 44.6 MB / 1597 ms; speed 711 MB / 1798 ms. Full AOT is 16x larger and slower here, so speed-profile is usually the right choice.</string>
++    <!-- 【本项目】系统内置门禁卡 -->
++    <string name="nfc_access_cards_title">Access cards</string>
++    <string name="nfc_access_cards_summary">Built-in card emulation, no app or root needed</string>
++    <string name="nfc_access_card_default_name">Access card</string>
++    <string name="nfc_access_card_hint_on">Tap a card to use it. Works with the screen on or off — just hold the back of the phone to the reader. Long-press a card to edit it.</string>
++    <string name="nfc_access_card_hint_off">Emulation is off. Tap a card to turn it on.</string>
++    <string name="nfc_access_card_applied_toast">Card switched. NFC restarts, ready in about 2 seconds</string>
++    <string name="nfc_access_card_disabled_toast">Card emulation turned off</string>
++    <string name="nfc_access_card_disable">Turn off</string>
++    <string name="nfc_access_card_disable_confirm">Stop emulating this card?</string>
++    <string name="nfc_access_card_add">+ Add access card</string>
++    <string name="nfc_access_card_rename_edit">Edit</string>
++    <string name="nfc_access_card_change_color">Change color</string>
++    <string name="nfc_access_card_delete">Delete</string>
++    <string name="nfc_access_card_delete_confirm">Delete this card?</string>
++    <string name="nfc_access_card_name_hint">Name (e.g. Home, Office)</string>
++    <string name="nfc_access_card_uid_hint">Card number (UID), e.g. 04 A1 B2 C3</string>
++    <string name="nfc_access_card_uid_invalid">Enter 4, 7 or 10 bytes in hex</string>
++    <string name="nfc_access_card_read">Read from a physical card</string>
++    <string name="nfc_access_card_read_prompt">Hold the physical card against the back of the phone…</string>
++    <string name="nfc_access_card_read_ok">Card number read</string>
++    <string name="nfc_access_card_read_fail">Could not read a usable card number</string>
++    <string name="nfc_access_card_nfc_off">Turn on NFC first</string>
++    <string name="autostart_mech_boot">boot broadcast</string>
++    <string name="autostart_mech_account">account authenticator</string>
++    <string name="autostart_mech_sync">sync adapter</string>
++    <string name="autostart_has_real_accounts">This app has real accounts:\n\n%1$s\n\nIt registers an account authenticator, which is also how apps keep themselves alive. Blocking everything will stop these accounts from syncing.</string>
++    <string name="autostart_boot_only">Boot only</string>
++    <string name="autostart_block_all">Block everything</string>
+ </resources>
+diff --git a/res/xml/autostart_manager.xml b/res/xml/autostart_manager.xml
+new file mode 100644
+index 00000000000..d868fea5cd1
+--- /dev/null
++++ b/res/xml/autostart_manager.xml
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 自启动管理。列表在 AutoStartManagerFragment 里运行时动态构建，
++     这里只提供一个空的 PreferenceScreen 作为容器。 -->
++<PreferenceScreen
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    android:key="autostart_manager"
++    android:title="@string/autostart_manager_title" />
+diff --git a/res/xml/dexopt_manager.xml b/res/xml/dexopt_manager.xml
+new file mode 100644
+index 00000000000..1b52a93913d
+--- /dev/null
++++ b/res/xml/dexopt_manager.xml
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 应用预编译。列表在 DexOptManagerFragment 里运行时动态构建，这里只是容器。 -->
++<PreferenceScreen
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    android:key="dexopt_manager"
++    android:title="@string/dexopt_manager_title" />
+diff --git a/res/xml/display_settings.xml b/res/xml/display_settings.xml
+index 3cda6ea138f..2e9231984ce 100644
+--- a/res/xml/display_settings.xml
++++ b/res/xml/display_settings.xml
+@@ -106,8 +106,9 @@
+             settings:controller="com.android.settings.display.NightDisplayPreferenceController"
+             settings:keywords="@string/keywords_display_night_display"/>
+ 
++        <!-- XZ1C: Sony-style image quality settings -->
+         <lineageos.preference.LineagePartsPreference
+-            android:key="livedisplay"
++            android:key="image_quality"
+             settings:requiresConfig="@*lineageos.platform:bool/config_enableLiveDisplay" />
+ 
+         <Preference
+diff --git a/res/xml/nfc_and_payment_settings.xml b/res/xml/nfc_and_payment_settings.xml
+index 5fb7c697c0c..37ca030c39c 100644
+--- a/res/xml/nfc_and_payment_settings.xml
++++ b/res/xml/nfc_and_payment_settings.xml
+@@ -36,6 +36,13 @@
+         settings:controller="com.android.settings.nfc.SecureNfcPreferenceController"
+         android:summary="@string/nfc_secure_toggle_summary"/>
+ 
++    <!-- 【本项目】系统内置门禁卡，见 AccessCardsFragment -->
++    <Preference
++        android:key="nfc_access_cards"
++        android:title="@string/nfc_access_cards_title"
++        android:summary="@string/nfc_access_cards_summary"
++        android:fragment="com.android.settings.nfc.AccessCardsFragment"/>
++
+     <Preference
+         android:key="default_payment_app"
+         android:title="@string/nfc_payment_settings_title"
+diff --git a/res/xml/power_usage_summary.xml b/res/xml/power_usage_summary.xml
+index bf033cd6c44..8ff699f9a7a 100644
+--- a/res/xml/power_usage_summary.xml
++++ b/res/xml/power_usage_summary.xml
+@@ -91,6 +91,50 @@
+         android:summary="@string/battery_percentage_description"
+         settings:controller="com.android.settings.display.BatteryPercentagePreferenceController" />
+ 
++    <!-- 后台超时自动清理：按 Home 键离开/直接切走的应用也管得到 -->
++    <lineageos.preference.LineageSystemSettingListPreference
++        android:key="bg_force_stop_timeout"
++        android:title="@string/bg_force_stop_timeout_title"
++        android:summary="%s"
++        android:entries="@array/bg_force_stop_timeout_entries"
++        android:entryValues="@array/bg_force_stop_timeout_values"
++        android:defaultValue="0" />
++
++    <lineageos.preference.LineageSystemSettingListPreference
++        android:key="bg_force_stop_mode"
++        android:title="@string/bg_force_stop_mode_title"
++        android:summary="%s"
++        android:entries="@array/bg_force_stop_mode_entries"
++        android:entryValues="@array/bg_force_stop_mode_values"
++        android:defaultValue="0" />
++
++    <lineageos.preference.LineageSystemSettingSwitchPreference
++        android:key="bg_trim_cached_procs"
++        android:title="@string/bg_trim_cached_procs_title"
++        android:summary="@string/bg_trim_cached_procs_summary"
++        android:defaultValue="false" />
++
++    <!-- 划掉最近任务即彻底退出（不再被自启动拉回后台） -->
++    <lineageos.preference.LineageSystemSettingSwitchPreference
++        android:key="swipe_away_force_stop"
++        android:title="@string/swipe_away_force_stop_title"
++        android:summary="@string/swipe_away_force_stop_summary"
++        android:defaultValue="false" />
++
++    <!-- 自启动管理：按应用控制开机自启 -->
++    <Preference
++        android:key="autostart_manager"
++        android:title="@string/autostart_manager_title"
++        android:summary="@string/autostart_manager_summary"
++        android:fragment="com.android.settings.fuelgauge.AutoStartManagerFragment" />
++
++    <!-- 应用预编译：按应用选择 dexopt 编译等级 -->
++    <Preference
++        android:key="dexopt_manager"
++        android:title="@string/dexopt_manager_title"
++        android:summary="@string/dexopt_manager_summary"
++        android:fragment="com.android.settings.fuelgauge.DexOptManagerFragment" />
++
+     <SwitchPreferenceCompat
+         android:key="fast_charging"
+         android:title="@string/fast_charging_title"
+diff --git a/src/com/android/settings/fuelgauge/AutoStartManagerFragment.java b/src/com/android/settings/fuelgauge/AutoStartManagerFragment.java
+new file mode 100644
+index 00000000000..34c2ec4f5df
+--- /dev/null
++++ b/src/com/android/settings/fuelgauge/AutoStartManagerFragment.java
+@@ -0,0 +1,441 @@
++/*
++ * Copyright (C) 2026 The LineageOS Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.settings.fuelgauge;
++
++import android.accounts.Account;
++import android.accounts.AccountManager;
++import android.accounts.AuthenticatorDescription;
++import android.app.AlertDialog;
++import android.app.settings.SettingsEnums;
++import android.content.ComponentName;
++import android.content.Context;
++import android.content.Intent;
++import android.content.pm.ApplicationInfo;
++import android.content.pm.PackageManager;
++import android.content.pm.ResolveInfo;
++import android.os.Bundle;
++import android.provider.Settings;
++import android.util.Log;
++
++import androidx.preference.Preference;
++import androidx.preference.PreferenceScreen;
++import androidx.preference.SwitchPreferenceCompat;
++
++import com.android.settings.R;
++import com.android.settings.SettingsPreferenceFragment;
++import com.android.settingslib.widget.FooterPreference;
++
++
++import java.text.Collator;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.Comparator;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.TreeSet;
++
++/**
++ * 自启动管理 —— 按应用切断「应用自己把自己拉起来」的各条路。
++ *
++ * 【原理】Android 在开机完成后广播 {@link Intent#ACTION_BOOT_COMPLETED}，
++ * 应用通过在清单里注册接收器来接收它，从而实现自启。本页面列出所有注册了该广播
++ * 的应用，关闭开关即把它的全部开机接收器置为
++ * {@link PackageManager#COMPONENT_ENABLED_STATE_DISABLED}，广播便不会投递给它。
++ *
++ * 【为什么不是改 AMS】在 AMS 分发广播时按名单过滤覆盖面更广（还能挡住被其他应用
++ * 通过 Service/Provider 唤起的路径），但要动系统核心调度逻辑。这里先做确定可行的一层：
++ * 禁用组件这条路在本机实测验证过——禁用微信的 BootReceiver 后重启，微信零进程。
++ *
++ * 【拦三种手段】2026-09-26 在应用宝（com.tencent.android.qqdownloader）上实测摸清的：
++ *
++ *   ① 开机广播 BOOT_COMPLETED —— 最常见，禁其接收器 + 写系统名单（AMS 侧过滤）
++ *   ② 假账号认证器 AccountAuthenticator —— 应用注册一个空账号类型，
++ *      system_server 的 AccountManagerService 必须绑定它来枚举账号，
++ *      于是系统自己成了帮凶，把应用钉在 adj=100（不可回收）
++ *   ③ 同步适配器 SyncAdapter —— 同步框架定时唤醒，绕过电池优化（同步算系统行为）
++ *
++ * 实测数据（应用宝，只禁 ②③，①本来就已在名单里）：
++ *   禁用前：3 个进程 502MB，adj=100，强制停止后 60 秒内自己爬回来
++ *   禁用后：重启后 0 个进程 0MB
++ *   （中间还试过连同它的守护服务一起禁，效果反而不如只禁 ②③ —— 所以不去猜
++ *     哪个是「守护服务」，只切系统侧这两个入口，边界清楚、副作用小）
++ *
++ * 【挡不住的】应用被其他应用主动调用（分享、支付回调、SDK 查它的 ContentProvider）
++ * 而启动。那属于正常的应用间调用，堵了会坏事，不在本页面职责内。
++ *
++ * 【范围】只列第三方应用。系统应用不列 —— 实测它们开机时绝大多数不走 BOOT_COMPLETED，
++ * 而是被 system_server 绑定为服务、标记 persistent 直接拉起，或被 ContentProvider 唤起，
++ * 本功能对它们无效；列出来会让人以为关了就有用。
++ */
++public class AutoStartManagerFragment extends SettingsPreferenceFragment {
++
++    private static final String TAG = "AutoStartManager";
++    /** 与 BroadcastController 里的同名常量必须一致 —— 两边读写的是同一个键。 */
++    private static final String SETTING_AUTOSTART_BLOCKED_PACKAGES = "autostart_blocked_packages";
++
++    /** 账号认证器：注册它，system_server 就必须绑定该应用来枚举账号。 */
++    private static final String ACTION_ACCOUNT_AUTHENTICATOR =
++            "android.accounts.AccountAuthenticator";
++    /** 同步适配器：同步框架会定时唤醒它，绕过电池优化。 */
++    private static final String ACTION_SYNC_ADAPTER = "android.content.SyncAdapter";
++
++    /** 即便用户打开「显示系统应用」也绝不允许改动的包 —— 动了会导致设备不可用。 */
++    private static final List<String> PROTECTED_PACKAGES = List.of(
++            "android",
++            "com.android.systemui",
++            "com.android.phone",
++            "com.android.settings",
++            "com.android.providers.settings",
++            "com.android.permissioncontroller",
++            "com.android.nfc",
++            "com.android.bluetooth",
++            "com.android.se");
++
++    private PackageManager mPm;
++
++    @Override
++    public int getMetricsCategory() {
++        return SettingsEnums.FUELGAUGE_POWER_USAGE_MANAGE_BACKGROUND;
++    }
++
++    @Override
++    public void onCreate(Bundle icicle) {
++        super.onCreate(icicle);
++        mPm = getContext().getPackageManager();
++        addPreferencesFromResource(R.xml.autostart_manager);
++    }
++
++    @Override
++    public void onResume() {
++        super.onResume();
++        rebuild();
++    }
++
++    /**
++     * 收集三类「自我拉起」组件，按包名归组。
++     *
++     * MATCH_DISABLED_COMPONENTS 必须带上 —— 否则已经被本页面关掉的应用会从列表里消失，
++     * 用户就再也打不开了。
++     */
++    private Map<String, List<ComponentName>> collectSelfStartComponents() {
++        final Map<String, List<ComponentName>> byPkg = new LinkedHashMap<>();
++        final int flags = PackageManager.MATCH_DISABLED_COMPONENTS
++                | PackageManager.MATCH_DIRECT_BOOT_AWARE
++                | PackageManager.MATCH_DIRECT_BOOT_UNAWARE;
++
++        // ① 开机广播接收器
++        for (ResolveInfo ri : mPm.queryBroadcastReceivers(
++                new Intent(Intent.ACTION_BOOT_COMPLETED), flags)) {
++            addIfEligible(byPkg, ri);
++        }
++        // ②③ 账号认证器 / 同步适配器（都是 Service）
++        for (String action : new String[]{ACTION_ACCOUNT_AUTHENTICATOR, ACTION_SYNC_ADAPTER}) {
++            for (ResolveInfo ri : mPm.queryIntentServices(new Intent(action), flags)) {
++                addIfEligible(byPkg, ri);
++            }
++        }
++        return byPkg;
++    }
++
++    /** 统一的过滤与归组：跳过受保护包和系统应用，其余按包名收进 map。 */
++    private void addIfEligible(Map<String, List<ComponentName>> byPkg, ResolveInfo ri) {
++        final android.content.pm.ComponentInfo ci =
++                ri.activityInfo != null ? ri.activityInfo : ri.serviceInfo;
++        if (ci == null) return;
++        final String pkg = ci.packageName;
++        if (PROTECTED_PACKAGES.contains(pkg)) return;
++        final ApplicationInfo ai = ci.applicationInfo;
++        if (ai == null) return;
++        // 系统应用一律不列。2026-09-23 实测：系统应用开机时绝大多数不是靠
++        // BOOT_COMPLETED 广播启动的，而是被 system_server 当作服务绑定、
++        // 标记 persistent 直接拉起，或被 ContentProvider 唤起。列出来只会误导。
++        if ((ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0) return;
++        final ComponentName cn = new ComponentName(pkg, ci.name);
++        final List<ComponentName> list =
++                byPkg.computeIfAbsent(pkg, k -> new ArrayList<>());
++        if (!list.contains(cn)) list.add(cn);
++    }
++
++    /** 该应用用了哪几种手段，用于在列表里如实标出。 */
++    private String describeMechanisms(String pkg, List<ComponentName> comps) {
++        boolean boot = false, auth = false, sync = false;
++        final int flags = PackageManager.MATCH_DISABLED_COMPONENTS;
++        for (ResolveInfo ri : mPm.queryBroadcastReceivers(
++                new Intent(Intent.ACTION_BOOT_COMPLETED), flags)) {
++            if (ri.activityInfo != null && pkg.equals(ri.activityInfo.packageName)) boot = true;
++        }
++        for (ResolveInfo ri : mPm.queryIntentServices(
++                new Intent(ACTION_ACCOUNT_AUTHENTICATOR), flags)) {
++            if (ri.serviceInfo != null && pkg.equals(ri.serviceInfo.packageName)) auth = true;
++        }
++        for (ResolveInfo ri : mPm.queryIntentServices(
++                new Intent(ACTION_SYNC_ADAPTER), flags)) {
++            if (ri.serviceInfo != null && pkg.equals(ri.serviceInfo.packageName)) sync = true;
++        }
++        final StringBuilder sb = new StringBuilder();
++        if (boot) sb.append(getString(R.string.autostart_mech_boot));
++        if (auth) {
++            if (sb.length() > 0) sb.append(" \u00b7 ");
++            sb.append(getString(R.string.autostart_mech_account));
++        }
++        if (sync) {
++            if (sb.length() > 0) sb.append(" \u00b7 ");
++            sb.append(getString(R.string.autostart_mech_sync));
++        }
++        return sb.toString();
++    }
++
++    /** 读系统侧名单（方案 B）。应用无权改它，这是拦截的主力。 */
++    private Set<String> readBlockedPackages() {
++        final Set<String> set = new TreeSet<>();
++        String raw = null;
++        try {
++            raw = Settings.Global.getString(getContext().getContentResolver(),
++                    SETTING_AUTOSTART_BLOCKED_PACKAGES);
++        } catch (Exception e) {
++            Log.w(TAG, "读取自启名单失败", e);
++        }
++        if (raw != null) {
++            for (String t : raw.split(",")) {
++                final String pkg = t.trim();
++                if (!pkg.isEmpty()) set.add(pkg);
++            }
++        }
++        return set;
++    }
++
++    private void writeBlockedPackages(Set<String> set) {
++        try {
++            Settings.Global.putString(getContext().getContentResolver(),
++                    SETTING_AUTOSTART_BLOCKED_PACKAGES, String.join(",", set));
++        } catch (Exception e) {
++            Log.w(TAG, "写入自启名单失败", e);
++        }
++    }
++
++    /**
++     * 是否允许自启。
++     * 以系统名单为准 —— 它是应用改不了的那一层；组件状态只是双保险，
++     * 应用可能把自己的组件改回启用，不能拿它当判据。
++     */
++    private boolean isAutoStartAllowed(String pkg, Set<String> blocked,
++            List<ComponentName> receivers) {
++        return !blocked.contains(pkg);
++    }
++
++    /** 旧判据，仅用于显示「应用已自行恢复组件」这类提示。 */
++    private boolean anyReceiverEnabled(List<ComponentName> receivers) {
++        for (ComponentName cn : receivers) {
++            final int state = mPm.getComponentEnabledSetting(cn);
++            if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) return true;
++            // DEFAULT 表示沿用清单里的 android:enabled，绝大多数是 true。
++            if (state == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) return true;
++        }
++        return false;
++    }
++
++    /**
++     * 关闭自启（完整版）：三条路一起断。
++     *   ① 写系统名单 —— AMS 分发开机广播时据此拦截，应用无权修改（主力）
++     *   ② 禁开机接收器 —— 双保险；应用能改回去（实测微信会），但改不了 ①
++     *   ③ 禁账号认证器 + 同步适配器 —— 切断 system_server 被迫绑定它的那条路
++     *
++     * ③ 是 2026-09-26 加的。实测应用宝：只做 ①② 时它仍有 3 个进程 502MB 且 adj=100
++     * （不可回收）；加上 ③ 之后重启为 0 个进程。做过对照 —— 连它的守护服务一起禁
++     * 反而不如只断 ③，所以不去猜「哪个是守护服务」。
++     */
++    private void setAutoStartAllowed(String pkg, List<ComponentName> receivers, boolean allow) {
++        setBootBlocked(pkg, receivers, !allow);
++        setComponentsEnabled(selfStartServicesOf(pkg), allow);
++    }
++
++    /** 只处理开机广播这一条：系统名单 + 开机接收器。保留账号同步。 */
++    private void setBootBlocked(String pkg, List<ComponentName> receivers, boolean blocked) {
++        final Set<String> list = readBlockedPackages();
++        if (blocked) {
++            list.add(pkg);
++        } else {
++            list.remove(pkg);
++        }
++        writeBlockedPackages(list);
++        setComponentsEnabled(receivers, !blocked);
++    }
++
++    /** 该应用注册的账号认证器 / 同步适配器服务。 */
++    private List<ComponentName> selfStartServicesOf(String pkg) {
++        final List<ComponentName> out = new ArrayList<>();
++        final int flags = PackageManager.MATCH_DISABLED_COMPONENTS;
++        for (String action : new String[]{ACTION_ACCOUNT_AUTHENTICATOR, ACTION_SYNC_ADAPTER}) {
++            for (ResolveInfo ri : mPm.queryIntentServices(new Intent(action), flags)) {
++                if (ri.serviceInfo == null) continue;
++                if (!pkg.equals(ri.serviceInfo.packageName)) continue;
++                final ComponentName cn = new ComponentName(pkg, ri.serviceInfo.name);
++                if (!out.contains(cn)) out.add(cn);
++            }
++        }
++        return out;
++    }
++
++    private void setComponentsEnabled(List<ComponentName> comps, boolean enabled) {
++        final int st = enabled
++                ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
++                : PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
++        for (ComponentName cn : comps) {
++            try {
++                // DONT_KILL_APP：不因为改组件状态而杀掉正在前台使用的应用。
++                mPm.setComponentEnabledSetting(cn, st, PackageManager.DONT_KILL_APP);
++            } catch (Exception e) {
++                Log.w(TAG, "设置组件状态失败: " + cn.flattenToShortString(), e);
++            }
++        }
++    }
++
++    /**
++     * 该应用的账号认证器下，有哪些【看起来是真的】账号。
++     *
++     * 判据不是猜组件名，而是查 AccountManager：先拿该包声明的认证器类型，
++     * 再列该类型下实际存在的账号，最后把 name 等于应用名的过滤掉 ——
++     * 那是保活专用的假账号（2026-09-26 本机实测：应用宝的账号 name="应用宝"，
++     * 抖音的 name="抖音"；而 Gmail 的 name 是 qpengf@gmail.com、
++     * Telegram 是手机号、Twitter 是用户名）。
++     *
++     * 读不到就返回空（当作没有真账号）—— 宁可少弹一次窗，也不要因为读账号失败
++     * 让用户关不掉一个流氓应用。
++     */
++    private List<String> realAccountsOf(String pkg) {
++        final List<String> out = new ArrayList<>();
++        try {
++            final AccountManager am = AccountManager.get(getContext());
++            final String label = String.valueOf(
++                    mPm.getApplicationLabel(mPm.getApplicationInfo(pkg, 0)));
++            for (AuthenticatorDescription d : am.getAuthenticatorTypes()) {
++                if (!pkg.equals(d.packageName)) continue;
++                for (Account a : am.getAccountsByType(d.type)) {
++                    if (a.name == null || a.name.equals(label)) continue;  // 假账号
++                    if (!out.contains(a.name)) out.add(a.name);
++                }
++            }
++        } catch (Exception e) {
++            Log.w(TAG, "读取账号失败: " + pkg, e);
++        }
++        return out;
++    }
++
++    /** 有真账号时先问清楚，给三个选项，别让用户在不知情的情况下弄坏同步。 */
++    private void confirmWithAccounts(String pkg, List<ComponentName> receivers,
++            List<String> accounts, SwitchPreferenceCompat pref) {
++        new AlertDialog.Builder(getContext())
++                .setTitle(mPm.getApplicationLabel(getApplicationInfoQuietly(pkg)))
++                .setMessage(getString(R.string.autostart_has_real_accounts,
++                        String.join("\n", accounts)))
++                .setNeutralButton(R.string.autostart_boot_only, (d, w) -> {
++                    setBootBlocked(pkg, receivers, true);   // 只挡开机广播，保留账号同步
++                    pref.setChecked(false);
++                })
++                .setPositiveButton(R.string.autostart_block_all, (d, w) -> {
++                    setAutoStartAllowed(pkg, receivers, false);
++                    pref.setChecked(false);
++                    rebuild();
++                })
++                .setNegativeButton(android.R.string.cancel, null)
++                .show();
++    }
++
++    private ApplicationInfo getApplicationInfoQuietly(String pkg) {
++        try {
++            return mPm.getApplicationInfo(pkg, 0);
++        } catch (Exception e) {
++            return new ApplicationInfo();
++        }
++    }
++
++    private void rebuild() {
++        final PreferenceScreen screen = getPreferenceScreen();
++        if (screen == null) return;
++        screen.removeAll();
++
++        final Context context = getPrefContext();
++        final Map<String, List<ComponentName>> byPkg = collectSelfStartComponents();
++        final Set<String> blocked = readBlockedPackages();
++
++        final List<Map.Entry<String, List<ComponentName>>> entries = new ArrayList<>(byPkg.entrySet());
++        final Collator collator = Collator.getInstance();
++        Collections.sort(entries, Comparator.comparing(
++                e -> labelOf(e.getKey()), collator::compare));
++
++        int allowed = 0;
++        for (Map.Entry<String, List<ComponentName>> e : entries) {
++            final String pkg = e.getKey();
++            final List<ComponentName> receivers = e.getValue();
++            final boolean on = isAutoStartAllowed(pkg, blocked, receivers);
++            if (on) allowed++;
++
++            final SwitchPreferenceCompat pref = new SwitchPreferenceCompat(context);
++            pref.setKey(pkg);
++            pref.setTitle(labelOf(pkg));
++            // 副标题：如实列出这个应用用了哪几种自我拉起手段。
++            // 只显示包名的话，用户看不出「为什么关了还在后台」——
++            // 应用宝就是靠账号认证器绕开开机广播那一层的。
++            final String mech = describeMechanisms(pkg, receivers);
++            if (!on && anyReceiverEnabled(receivers)) {
++                // 应用把自己的组件改回启用了；系统名单仍在拦，这里如实说明。
++                pref.setSummary(getString(R.string.autostart_blocked_by_system, mech));
++            } else {
++                pref.setSummary(mech.isEmpty() ? pkg : mech);
++            }
++            try {
++                pref.setIcon(mPm.getApplicationIcon(pkg));
++            } catch (PackageManager.NameNotFoundException ignored) {
++            }
++            pref.setChecked(on);
++            pref.setPersistent(false);
++            pref.setOnPreferenceChangeListener((p, newValue) -> {
++                final boolean allow = (Boolean) newValue;
++                if (allow) {
++                    setAutoStartAllowed(pkg, receivers, true);
++                    return true;
++                }
++                // 关闭时：先看它的账号认证器下有没有【真账号】。
++                // 抖音/应用宝那种假账号的 name 就是应用名本身，直接关掉即可；
++                // Gmail 那种 name 是邮箱地址，关掉会中断真实同步，必须先问。
++                final List<String> real = realAccountsOf(pkg);
++                if (real.isEmpty()) {
++                    setAutoStartAllowed(pkg, receivers, false);
++                    return true;
++                }
++                confirmWithAccounts(pkg, receivers, real, (SwitchPreferenceCompat) p);
++                return false;   // 先不改 UI，等用户在对话框里选
++            });
++            screen.addPreference(pref);
++        }
++
++        final FooterPreference footer = new FooterPreference(context);
++        footer.setTitle(getString(R.string.autostart_manager_footer, allowed, entries.size()));
++        footer.setSelectable(false);
++        screen.addPreference(footer);
++    }
++
++    private String labelOf(String pkg) {
++        try {
++            return mPm.getApplicationLabel(mPm.getApplicationInfo(pkg, 0)).toString();
++        } catch (PackageManager.NameNotFoundException e) {
++            return pkg;
++        }
++    }
++}
+diff --git a/src/com/android/settings/fuelgauge/DexOptManagerFragment.java b/src/com/android/settings/fuelgauge/DexOptManagerFragment.java
+new file mode 100644
+index 00000000000..f1c56b9264d
+--- /dev/null
++++ b/src/com/android/settings/fuelgauge/DexOptManagerFragment.java
+@@ -0,0 +1,338 @@
++/*
++ * Copyright (C) 2026 The LineageOS Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.settings.fuelgauge;
++
++import android.app.AlertDialog;
++import android.app.AppGlobals;
++import android.app.settings.SettingsEnums;
++import android.content.Context;
++import android.content.DialogInterface;
++import android.content.pm.ApplicationInfo;
++import android.content.pm.IPackageManager;
++import android.content.pm.PackageManager;
++import android.os.Bundle;
++import android.os.Handler;
++import android.os.Looper;
++import android.os.RemoteException;
++import android.os.SystemClock;
++import android.text.TextUtils;
++import android.util.Log;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.RadioButton;
++import android.widget.RadioGroup;
++import android.widget.ScrollView;
++
++import androidx.preference.Preference;
++import androidx.preference.PreferenceScreen;
++
++import com.android.settings.R;
++import com.android.settings.SettingsPreferenceFragment;
++import com.android.settingslib.widget.FooterPreference;
++
++import java.text.Collator;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.Comparator;
++import java.util.List;
++import java.util.concurrent.atomic.AtomicBoolean;
++
++/**
++ * 应用预编译（dexopt）管理 —— 选应用、选编译等级、看进度与结果。
++ *
++ * 【怎么触发编译】走 {@code IPackageManager#performDexOptMode}，就是
++ * {@code cmd package compile} 背后同一条路。它的权限检查是
++ * {@code isSystemOrRootOrShell()}，而设置应用跑在 {@code android.uid.system}，
++ * 所以能直接调，不需要为此新建系统服务。
++ *
++ * 【怎么读状态】编译等级只有 system_server 内部的 ArtManagerLocal 拿得到，
++ * 因此本项目在 {@code IPackageManager} 上补了 {@code getDexOptCompilerFilter}，
++ * 权限检查与上面一致。
++ *
++ * 【关于"进度"】{@code performDexOptMode} 是同步调用，**不提供细粒度进度**
++ * （ART Service 只对批量任务给进度回调）。所以这里显示的是"编译中 + 已用秒数"，
++ * 而不是百分比。做不出来的东西不假装做得出来。
++ *
++ * 【speed-profile 的陷阱】没有 profile 时它会**静默退回 verify**，而且接口照样
++ * 返回成功。这里的做法是编译完回读一次实际等级，与用户选的不一致就如实说明，
++ * 不靠猜也不靠去翻 /data/misc/profiles。
++ */
++public class DexOptManagerFragment extends SettingsPreferenceFragment {
++
++    private static final String TAG = "DexOptManager";
++
++    /** 用户可选的编译等级。顺序即界面顺序。 */
++    private static final String FILTER_VERIFY = "verify";
++    private static final String FILTER_SPEED_PROFILE = "speed-profile";
++    private static final String FILTER_SPEED = "speed";
++    private static final String[] FILTERS = {
++            FILTER_VERIFY, FILTER_SPEED_PROFILE, FILTER_SPEED};
++
++    private PackageManager mPm;
++    private IPackageManager mIPm;
++    private final Handler mHandler = new Handler(Looper.getMainLooper());
++
++    @Override
++    public int getMetricsCategory() {
++        return SettingsEnums.FUELGAUGE_POWER_USAGE_MANAGE_BACKGROUND;
++    }
++
++    @Override
++    public void onCreate(Bundle icicle) {
++        super.onCreate(icicle);
++        mPm = getContext().getPackageManager();
++        mIPm = AppGlobals.getPackageManager();
++        addPreferencesFromResource(R.xml.dexopt_manager);
++    }
++
++    @Override
++    public void onResume() {
++        super.onResume();
++        rebuild();
++    }
++
++    /** 返回 "<filter>|<reason>"，读不到返回 null。 */
++    private String queryStatus(String pkg) {
++        try {
++            return mIPm.getDexOptCompilerFilter(pkg);
++        } catch (RemoteException | SecurityException e) {
++            Log.w(TAG, "读取编译状态失败: " + pkg, e);
++            return null;
++        }
++    }
++
++    private static String filterOf(String status) {
++        if (TextUtils.isEmpty(status)) return "";
++        final int i = status.indexOf('|');
++        return i < 0 ? status : status.substring(0, i);
++    }
++
++    private static String reasonOf(String status) {
++        if (TextUtils.isEmpty(status)) return "";
++        final int i = status.indexOf('|');
++        return i < 0 ? "" : status.substring(i + 1);
++    }
++
++    /** 每次 rebuild 自增；后台查询回来时代数不对就丢弃，避免旧结果覆盖新结果。 */
++    private int mGeneration;
++
++    /**
++     * 查询放到后台线程，主线程只负责把结果摆上去。
++     *
++     * 2026-09-24 用户遇到「Settings isn't responding」：ANR 堆栈全停在主线程的
++     * getDexOptCompilerFilter —— 它要让 artd 逐个去看每个应用的 odex/vdex 文件，
++     * 装在 SD 卡（融卡）上的应用尤其慢，53 个应用串行查下来超过 5 秒。
++     */
++    private void rebuild() {
++        final int gen = ++mGeneration;
++        new Thread(() -> {
++            final List<ApplicationInfo> apps = new ArrayList<>();
++            for (ApplicationInfo ai : mPm.getInstalledApplications(0)) {
++                // 只列第三方应用：系统应用的 dexopt 由构建期 dexpreopt 决定，
++                // 运行时改它收益有限、风险不小（改坏了要重刷）。
++                if ((ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0) continue;
++                apps.add(ai);
++            }
++            final List<CharSequence> labels = new ArrayList<>();
++            for (ApplicationInfo ai : apps) {
++                labels.add(mPm.getApplicationLabel(ai));
++            }
++            final Collator collator = Collator.getInstance();
++            final List<Integer> order = new ArrayList<>();
++            for (int i = 0; i < apps.size(); i++) order.add(i);
++            Collections.sort(order, (x, y) -> collator.compare(
++                    String.valueOf(labels.get(x)), String.valueOf(labels.get(y))));
++            final List<ApplicationInfo> sortedApps = new ArrayList<>();
++            final List<CharSequence> sortedLabels = new ArrayList<>();
++            final List<String> statuses = new ArrayList<>();
++            for (int i : order) {
++                sortedApps.add(apps.get(i));
++                sortedLabels.add(labels.get(i));
++                statuses.add(queryStatus(apps.get(i).packageName));
++            }
++            mHandler.post(() -> {
++                if (gen == mGeneration) populate(sortedApps, sortedLabels, statuses);
++            });
++        }, "dexopt-query").start();
++    }
++
++    private void populate(List<ApplicationInfo> apps, List<CharSequence> labels,
++            List<String> statuses) {
++        final PreferenceScreen screen = getPreferenceScreen();
++        if (screen == null || getContext() == null) return;
++        screen.removeAll();
++        final Context context = getPrefContext();
++
++        int optimized = 0;
++        for (int i = 0; i < apps.size(); i++) {
++            final ApplicationInfo ai = apps.get(i);
++            final String pkg = ai.packageName;
++            final String status = statuses.get(i);
++            final String filter = filterOf(status);
++            if (FILTER_SPEED_PROFILE.equals(filter) || FILTER_SPEED.equals(filter)) {
++                optimized++;
++            }
++
++            final Preference pref = new Preference(context);
++            pref.setKey(pkg);
++            pref.setTitle(labels.get(i));
++            pref.setSummary(TextUtils.isEmpty(filter)
++                    ? getString(R.string.dexopt_state_unknown)
++                    : getString(R.string.dexopt_state_fmt, filter, reasonOf(status)));
++            try {
++                pref.setIcon(mPm.getApplicationIcon(pkg));
++            } catch (PackageManager.NameNotFoundException ignored) {
++            }
++            pref.setOnPreferenceClickListener(p -> {
++                showFilterDialog(ai, filter);
++                return true;
++            });
++            screen.addPreference(pref);
++        }
++
++        final FooterPreference footer = new FooterPreference(context);
++        footer.setTitle(getString(R.string.dexopt_manager_footer, optimized, apps.size()));
++        footer.setSelectable(false);
++        screen.addPreference(footer);
++    }
++
++    private void showFilterDialog(ApplicationInfo ai, String current) {
++        final CharSequence[] items = {
++                getString(R.string.dexopt_filter_verify),
++                getString(R.string.dexopt_filter_speed_profile),
++                getString(R.string.dexopt_filter_speed),
++        };
++        int checked = -1;
++        for (int i = 0; i < FILTERS.length; i++) {
++            if (FILTERS[i].equals(current)) {
++                checked = i;
++                break;
++            }
++        }
++        final int[] picked = {checked};
++
++        // 不用 setSingleChoiceItems：它的列表项是固定行高的 CheckedTextView，选项文字
++        // 一折成两行，最后一项就压到「取消 / 编译」按钮上（2026-09-24 用户截图，英文系统
++        // 大字号下必现）。改成 ScrollView + RadioGroup，RadioButton 会随文字自动长高，
++        // 放不下时整块可滚动，不会再和按钮重叠。
++        final Context ctx = getContext();
++        final float dp = ctx.getResources().getDisplayMetrics().density;
++        final RadioGroup group = new RadioGroup(ctx);
++        final int padH = (int) (20 * dp);
++        group.setPadding(padH, (int) (8 * dp), padH, (int) (8 * dp));
++        for (int i = 0; i < items.length; i++) {
++            final RadioButton rb = new RadioButton(ctx);
++            rb.setId(View.generateViewId());
++            rb.setText(items[i]);
++            rb.setMinHeight((int) (48 * dp));
++            rb.setPadding((int) (8 * dp), (int) (6 * dp), 0, (int) (6 * dp));
++            final int which = i;
++            rb.setOnClickListener(v -> picked[0] = which);
++            group.addView(rb, new RadioGroup.LayoutParams(
++                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
++            if (i == checked) {
++                group.check(rb.getId());
++            }
++        }
++        final ScrollView scroll = new ScrollView(ctx);
++        scroll.addView(group);
++
++        new AlertDialog.Builder(ctx)
++                .setTitle(mPm.getApplicationLabel(ai))
++                .setView(scroll)
++                .setNegativeButton(android.R.string.cancel, null)
++                .setPositiveButton(R.string.dexopt_start, (d, w) -> {
++                    if (picked[0] >= 0) {
++                        startCompile(ai, FILTERS[picked[0]]);
++                    }
++                })
++                .show();
++    }
++
++    private void startCompile(ApplicationInfo ai, String target) {
++        final String pkg = ai.packageName;
++        final CharSequence label = mPm.getApplicationLabel(ai);
++        final AtomicBoolean done = new AtomicBoolean(false);
++        final long t0 = SystemClock.elapsedRealtime();
++
++        final AlertDialog dialog = new AlertDialog.Builder(getContext())
++                .setTitle(R.string.dexopt_running_title)
++                .setMessage(getString(R.string.dexopt_running_fmt, label, target, 0))
++                .setCancelable(false)
++                .create();
++        dialog.show();
++
++        // 每秒刷新已用时间。没有细粒度进度可用，如实显示"已用 N 秒"。
++        final Runnable ticker = new Runnable() {
++            @Override
++            public void run() {
++                if (done.get() || !dialog.isShowing()) return;
++                final long sec = (SystemClock.elapsedRealtime() - t0) / 1000;
++                dialog.setMessage(getString(R.string.dexopt_running_fmt, label, target, sec));
++                mHandler.postDelayed(this, 1000);
++            }
++        };
++        mHandler.postDelayed(ticker, 1000);
++
++        new Thread(() -> {
++            boolean ok = false;
++            String err = null;
++            try {
++                // checkProfiles 参数在 A15 已被忽略；force=true 才能降级
++                //（speed → speed-profile 属降级，不加 force 会被静默拒绝还报成功）。
++                ok = mIPm.performDexOptMode(pkg, true /* checkProfiles */, target,
++                        true /* force */, true /* bootComplete */, null /* splitName */);
++            } catch (Exception e) {
++                Log.w(TAG, "编译失败: " + pkg, e);
++                err = String.valueOf(e.getMessage());
++            }
++            final boolean fOk = ok;
++            final String fErr = err;
++            final long sec = (SystemClock.elapsedRealtime() - t0) / 1000;
++            // 回读实际等级也是一次 artd 查询，同样不能放主线程。
++            final String actual = filterOf(queryStatus(pkg));
++            done.set(true);
++            mHandler.post(() -> {
++                if (dialog.isShowing()) dialog.dismiss();
++                if (getContext() == null) return;
++                showResult(label, target, fOk, fErr, sec, actual);
++                rebuild();
++            });
++        }, "dexopt-" + pkg).start();
++    }
++
++    private void showResult(CharSequence label, String target, boolean ok, String err,
++            long sec, String actual) {
++        final StringBuilder sb = new StringBuilder();
++        if (ok) {
++            sb.append(getString(R.string.dexopt_result_ok, sec, actual));
++            // speed-profile 无 profile 时会静默退回 verify，接口照样返回成功。
++            // 不猜、不去翻 /data/misc/profiles —— 直接回读实际等级来判断。
++            if (FILTER_SPEED_PROFILE.equals(target) && FILTER_VERIFY.equals(actual)) {
++                sb.append("\n\n").append(getString(R.string.dexopt_result_no_profile));
++            }
++        } else {
++            sb.append(getString(R.string.dexopt_result_fail, actual));
++            if (!TextUtils.isEmpty(err)) sb.append("\n\n").append(err);
++        }
++        new AlertDialog.Builder(getContext())
++                .setTitle(label)
++                .setMessage(sb.toString())
++                .setPositiveButton(android.R.string.ok, (DialogInterface d, int w) -> d.dismiss())
++                .show();
++    }
++}
+diff --git a/src/com/android/settings/nfc/AccessCardsActivity.java b/src/com/android/settings/nfc/AccessCardsActivity.java
+new file mode 100644
+index 00000000000..7dea4f44ad7
+--- /dev/null
++++ b/src/com/android/settings/nfc/AccessCardsActivity.java
+@@ -0,0 +1,26 @@
++/*
++ * SPDX-FileCopyrightText: 2026 The LineageOS Project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package com.android.settings.nfc;
++
++import android.os.Bundle;
++
++import com.android.settings.SubSettings;
++
++/**
++ * 【本项目】门禁卡管理页的直达入口：SystemUI 的 NFC 磁贴长按打开它。
++ *
++ * 继承 SubSettings 而不是 SettingsActivity：后者只放行 SettingsGateway 白名单里的
++ * fragment，SubSettings 放行所有 fragment。
++ */
++public class AccessCardsActivity extends SubSettings {
++    @Override
++    protected void onCreate(Bundle savedState) {
++        if (getIntent().getStringExtra(EXTRA_SHOW_FRAGMENT) == null) {
++            getIntent().putExtra(EXTRA_SHOW_FRAGMENT, AccessCardsFragment.class.getName());
++        }
++        super.onCreate(savedState);
++    }
++}
+diff --git a/src/com/android/settings/nfc/AccessCardsFragment.java b/src/com/android/settings/nfc/AccessCardsFragment.java
+new file mode 100644
+index 00000000000..4330b337744
+--- /dev/null
++++ b/src/com/android/settings/nfc/AccessCardsFragment.java
+@@ -0,0 +1,557 @@
++/*
++ * SPDX-FileCopyrightText: 2026 The LineageOS Project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package com.android.settings.nfc;
++
++import android.app.Activity;
++import android.app.AlertDialog;
++import android.app.settings.SettingsEnums;
++import android.content.Context;
++import android.content.SharedPreferences;
++import android.graphics.Color;
++import android.graphics.Typeface;
++import android.graphics.drawable.GradientDrawable;
++import android.nfc.NfcAdapter;
++import android.nfc.Tag;
++import android.os.Bundle;
++import android.provider.Settings;
++import android.text.InputType;
++import android.util.TypedValue;
++import android.view.Gravity;
++import android.view.LayoutInflater;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.Button;
++import android.widget.EditText;
++import android.widget.FrameLayout;
++import android.widget.LinearLayout;
++import android.widget.ScrollView;
++import android.widget.TextView;
++import android.widget.Toast;
++
++import com.android.settings.R;
++import com.android.settings.core.InstrumentedFragment;
++
++import org.json.JSONArray;
++import org.json.JSONException;
++import org.json.JSONObject;
++
++import java.util.ArrayList;
++import java.util.HexFormat;
++import java.util.List;
++import java.util.Locale;
++
++/**
++ * 【本项目】系统内置门禁卡 —— 卡片式管理页（仿第三方「NFC 卡模拟」的界面）。
++ *
++ * 模拟本身在 NFC 服务里做（packages/apps/Nfc：NativeNfcManager.doSetEmulatedUid →
++ * 每次 NFC 启动把卡号写进 NCI 参数 0x33 LA_NFCID1，A/B 类默认路由改到主机），
++ * 这里只负责管理卡片：
++ *
++ *   当前卡号 → Settings.Global "nfc_emulated_uid"（NFC 服务读它；为空 = 不模拟）
++ *   卡片列表 → Settings.Secure "nfc_access_cards"，JSON [{name, uid, color}]。
++ *              放系统设置是为了让 SystemUI 的 NFC 磁贴能读（副标题显示卡名、点一下选卡）。
++ *              这是非公开设置项，Android 12+ 的第三方应用读不到。
++ *              （早期版本存在本应用 SharedPreferences，首次读取时自动迁移过来。）
++ *
++ * 改了 nfc_emulated_uid 后，NFC 服务自己监听到变化会重启 NFC 栈，约 2 秒后生效。
++ */
++public class AccessCardsFragment extends InstrumentedFragment {
++
++    static final String SETTING_EMULATED_UID = "nfc_emulated_uid";
++    static final String SETTING_ACCESS_CARDS = "nfc_access_cards";
++    private static final String PREFS = "nfc_access_cards";
++    private static final String KEY_CARDS = "cards";
++
++    private static final int[][] COLORS = {
++            {0xFF7CB518, 0xFFA3E635},   // 绿（与卡模拟器同色）
++            {0xFF2563EB, 0xFF60A5FA},   // 蓝
++            {0xFFEA580C, 0xFFFB923C},   // 橙
++            {0xFF7C3AED, 0xFFA78BFA},   // 紫
++            {0xFFDC2626, 0xFFF87171},   // 红
++            {0xFF0F766E, 0xFF2DD4BF},   // 青
++    };
++
++    static final class Card {
++        String name;
++        String uid;   // 大写十六进制，无分隔符
++        int color;
++    }
++
++    private LinearLayout mList;
++    private final List<Card> mCards = new ArrayList<>();
++    private AlertDialog mReadDialog;
++
++    @Override
++    public int getMetricsCategory() {
++        return SettingsEnums.NFC_PAYMENT;
++    }
++
++    @Override
++    public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle saved) {
++        final Context ctx = requireContext();
++        final ScrollView scroll = new ScrollView(ctx);
++        mList = new LinearLayout(ctx);
++        mList.setOrientation(LinearLayout.VERTICAL);
++        final int pad = dp(16);
++        mList.setPadding(pad, dp(8), pad, pad);
++        scroll.addView(mList);
++        return scroll;
++    }
++
++    @Override
++    public void onResume() {
++        super.onResume();
++        requireActivity().setTitle(R.string.nfc_access_cards_title);
++        load();
++        render();
++    }
++
++    @Override
++    public void onPause() {
++        super.onPause();
++        stopReading();
++    }
++
++    // ---------------------------------------------------------------- 存取
++
++    // 卡片数据的读写（SystemUI 的 NFC 磁贴按同样的键名直接读 Settings.Global / Secure）。
++
++    private static SharedPreferences prefs(Context ctx) {
++        return ctx.createDeviceProtectedStorageContext()
++                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
++    }
++
++    /** 读卡片列表；当前在用的卡号（例如之前用 adb 设过的）若不在列表里，补成一张卡。 */
++    static List<Card> loadCards(Context ctx) {
++        final List<Card> cards = new ArrayList<>();
++        String json = Settings.Secure.getString(ctx.getContentResolver(), SETTING_ACCESS_CARDS);
++        if (json == null) {
++            // 迁移旧版本存在 SharedPreferences 里的列表
++            json = prefs(ctx).getString(KEY_CARDS, null);
++            if (json != null) {
++                Settings.Secure.putString(ctx.getContentResolver(), SETTING_ACCESS_CARDS, json);
++                prefs(ctx).edit().remove(KEY_CARDS).apply();
++            }
++        }
++        try {
++            final JSONArray arr = new JSONArray(json == null ? "[]" : json);
++            for (int i = 0; i < arr.length(); i++) {
++                final JSONObject o = arr.getJSONObject(i);
++                final Card c = new Card();
++                c.name = o.optString("name");
++                c.uid = normalize(o.optString("uid"));
++                c.color = o.optInt("color", i % COLORS.length);
++                if (c.uid != null) cards.add(c);
++            }
++        } catch (JSONException ignored) {
++        }
++        final String current = currentUid(ctx);
++        if (current != null && indexOf(cards, current) < 0) {
++            final Card c = new Card();
++            c.name = ctx.getString(R.string.nfc_access_card_default_name);
++            c.uid = current;
++            c.color = 0;
++            cards.add(0, c);
++            saveCards(ctx, cards);
++        }
++        return cards;
++    }
++
++    static void saveCards(Context ctx, List<Card> cards) {
++        final JSONArray arr = new JSONArray();
++        for (Card c : cards) {
++            try {
++                arr.put(new JSONObject().put("name", c.name).put("uid", c.uid)
++                        .put("color", c.color));
++            } catch (JSONException ignored) {
++            }
++        }
++        Settings.Secure.putString(ctx.getContentResolver(), SETTING_ACCESS_CARDS, arr.toString());
++    }
++
++    static String currentUid(Context ctx) {
++        return normalize(Settings.Global.getString(ctx.getContentResolver(),
++                SETTING_EMULATED_UID));
++    }
++
++    /** 写当前卡号；NFC 服务监听到后自己重启 NFC 栈，约 2 秒生效。 */
++    static void setCurrentUid(Context ctx, String uid) {
++        Settings.Global.putString(ctx.getContentResolver(), SETTING_EMULATED_UID, uid);
++        Toast.makeText(ctx, uid == null
++                ? R.string.nfc_access_card_disabled_toast
++                : R.string.nfc_access_card_applied_toast, Toast.LENGTH_SHORT).show();
++    }
++
++    static int indexOf(List<Card> cards, String uid) {
++        for (int i = 0; i < cards.size(); i++) {
++            if (cards.get(i).uid.equals(uid)) return i;
++        }
++        return -1;
++    }
++
++    private void load() {
++        mCards.clear();
++        mCards.addAll(loadCards(requireContext()));
++    }
++
++    private void save() {
++        saveCards(requireContext(), mCards);
++    }
++
++    private String currentUid() {
++        return currentUid(requireContext());
++    }
++
++    private void setCurrentUid(String uid) {
++        setCurrentUid(requireContext(), uid);
++    }
++
++    /** 只接受 4 / 7 / 10 字节（8 / 14 / 20 位十六进制），其余返回 null。 */
++    static String normalize(String s) {
++        if (s == null) return null;
++        final String hex = s.replaceAll("[^0-9A-Fa-f]", "").toUpperCase(Locale.ROOT);
++        return (hex.length() == 8 || hex.length() == 14 || hex.length() == 20) ? hex : null;
++    }
++
++    private static String pretty(String uid) {
++        final StringBuilder sb = new StringBuilder();
++        for (int i = 0; i < uid.length(); i += 2) {
++            if (i > 0) sb.append(' ');
++            sb.append(uid, i, i + 2);
++        }
++        return sb.toString();
++    }
++
++    // ---------------------------------------------------------------- 界面
++
++    // ---------------------------------------------------------------- 钱包式叠放
++    //
++    // 所有卡叠成一摞：每张都是完整大小，但依次下移 STRIP_DP，后面的压住前面的，只露出顶部
++    // 一条（名字 + 颜色）。当前卡排在最后 = 最前面，完整可见。点任意一张露出来的卡条 →
++    // 它成为当前卡，带动画滑到最前面，其余卡收回叠着。视图按卡号复用，这样 ChangeBounds
++    // 才有动画可做。
++
++    private static final int CARD_DP = 190;
++    private static final int STRIP_DP = 58;
++
++    private FrameLayout mStack;
++    private TextView mHint;
++    private final java.util.Map<String, View> mCardViews = new java.util.HashMap<>();
++
++    private void render() {
++        mList.removeAllViews();
++        mCardViews.clear();
++        final Context ctx = requireContext();
++
++        mHint = new TextView(ctx);
++        mHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
++        mHint.setPadding(dp(4), dp(4), dp(4), dp(12));
++        mList.addView(mHint);
++
++        mStack = new FrameLayout(ctx);
++        mStack.setClipChildren(false);
++        mList.addView(mStack, new LinearLayout.LayoutParams(
++                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
++        for (Card c : mCards) {
++            final View v = cardView(c);
++            mCardViews.put(c.uid, v);
++            mStack.addView(v);
++        }
++        mList.addView(addButton());
++        layoutStack(false);
++    }
++
++    /** 按当前卡重新排这一摞；animate 为 true 时带滑动动画。 */
++    private void layoutStack(boolean animate) {
++        if (mStack == null) return;
++        final String current = currentUid();
++        mHint.setText(current == null ? R.string.nfc_access_card_hint_off
++                : R.string.nfc_access_card_hint_on);
++        final List<Card> order = new ArrayList<>();
++        Card active = null;
++        for (Card c : mCards) {
++            if (active == null && c.uid.equals(current)) active = c;
++            else order.add(c);
++        }
++        if (active != null) order.add(active);   // 当前卡放最后 = 叠在最前面
++
++        if (animate) {
++            android.transition.TransitionManager.beginDelayedTransition(mStack,
++                    new android.transition.ChangeBounds().setDuration(260));
++        }
++        for (int i = 0; i < order.size(); i++) {
++            final Card c = order.get(i);
++            final View v = mCardViews.get(c.uid);
++            if (v == null) continue;
++            final FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) v.getLayoutParams();
++            lp.topMargin = dp(i * STRIP_DP);
++            v.setLayoutParams(lp);
++            v.setTranslationZ(dp(i * 2));
++            final boolean isActive = c == active;
++            final View check = v.findViewWithTag("check");
++            if (check != null) check.setVisibility(isActive ? View.VISIBLE : View.INVISIBLE);
++            v.setElevation(dp(isActive ? 6 : 2));
++        }
++        final LinearLayout.LayoutParams slp = (LinearLayout.LayoutParams) mStack.getLayoutParams();
++        slp.height = order.isEmpty() ? 0 : dp((order.size() - 1) * STRIP_DP + CARD_DP);
++        mStack.setLayoutParams(slp);
++    }
++
++    private View cardView(Card c) {
++        final Context ctx = requireContext();
++        final FrameLayout card = new FrameLayout(ctx);
++        card.setLayoutParams(new FrameLayout.LayoutParams(
++                ViewGroup.LayoutParams.MATCH_PARENT, dp(CARD_DP), Gravity.TOP));
++        final int[] colors = COLORS[Math.floorMod(c.color, COLORS.length)];
++        final GradientDrawable bg = new GradientDrawable(
++                GradientDrawable.Orientation.BL_TR, colors);
++        bg.setCornerRadius(dp(18));
++        card.setBackground(bg);
++
++        final TextView name = new TextView(ctx);
++        name.setText(c.name);
++        name.setTextColor(Color.WHITE);
++        name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
++        name.setTypeface(Typeface.DEFAULT_BOLD);
++        final FrameLayout.LayoutParams nlp = new FrameLayout.LayoutParams(
++                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
++                Gravity.TOP | Gravity.START);
++        nlp.setMargins(dp(22), dp(16), dp(22), 0);
++        card.addView(name, nlp);
++
++        final TextView uid = new TextView(ctx);
++        uid.setText(pretty(c.uid));
++        uid.setTextColor(0xE6FFFFFF);
++        uid.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
++        uid.setTypeface(Typeface.MONOSPACE);
++        final FrameLayout.LayoutParams ulp = new FrameLayout.LayoutParams(
++                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
++                Gravity.BOTTOM | Gravity.START);
++        ulp.setMargins(dp(22), 0, 0, dp(22));
++        card.addView(uid, ulp);
++
++        final TextView check = new TextView(ctx);
++        check.setTag("check");
++        check.setText("✓");
++        check.setGravity(Gravity.CENTER);
++        check.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
++        check.setTextColor(colors[0]);
++        final GradientDrawable circle = new GradientDrawable();
++        circle.setShape(GradientDrawable.OVAL);
++        circle.setColor(Color.WHITE);
++        check.setBackground(circle);
++        final FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(dp(46), dp(46),
++                Gravity.BOTTOM | Gravity.END);
++        clp.setMargins(0, 0, dp(18), dp(18));
++        card.addView(check, clp);
++
++        card.setOnClickListener(v -> {
++            if (c.uid.equals(currentUid())) {
++                new AlertDialog.Builder(ctx)
++                        .setTitle(c.name)
++                        .setMessage(R.string.nfc_access_card_disable_confirm)
++                        .setNegativeButton(android.R.string.cancel, null)
++                        .setPositiveButton(R.string.nfc_access_card_disable, (d, w) -> {
++                            setCurrentUid(null);
++                            layoutStack(true);
++                        })
++                        .show();
++            } else {
++                setCurrentUid(c.uid);
++                layoutStack(true);
++            }
++        });
++        card.setOnLongClickListener(v -> {
++            showCardMenu(c);
++            return true;
++        });
++        return card;
++    }
++
++    private View addButton() {
++        final Context ctx = requireContext();
++        final TextView add = new TextView(ctx);
++        add.setText(R.string.nfc_access_card_add);
++        add.setGravity(Gravity.CENTER);
++        add.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
++        final TypedValue tv = new TypedValue();
++        ctx.getTheme().resolveAttribute(android.R.attr.textColorSecondary, tv, true);
++        add.setTextColor(ctx.getColor(tv.resourceId != 0 ? tv.resourceId
++                : android.R.color.darker_gray));
++        final GradientDrawable dash = new GradientDrawable();
++        dash.setCornerRadius(dp(18));
++        dash.setStroke(dp(2), 0x66888888, dp(8), dp(6));
++        add.setBackground(dash);
++        add.setLayoutParams(new LinearLayout.LayoutParams(
++                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)));
++        ((LinearLayout.LayoutParams) add.getLayoutParams()).topMargin = dp(14);
++        add.setOnClickListener(v -> showEditDialog(null));
++        return add;
++    }
++
++    private void showCardMenu(Card c) {
++        final CharSequence[] items = {
++                getString(R.string.nfc_access_card_rename_edit),
++                getString(R.string.nfc_access_card_change_color),
++                getString(R.string.nfc_access_card_delete),
++        };
++        new AlertDialog.Builder(requireContext())
++                .setTitle(c.name)
++                .setItems(items, (d, which) -> {
++                    if (which == 0) {
++                        showEditDialog(c);
++                    } else if (which == 1) {
++                        c.color = (c.color + 1) % COLORS.length;
++                        save();
++                        render();
++                    } else {
++                        confirmDelete(c);
++                    }
++                })
++                .show();
++    }
++
++    private void confirmDelete(Card c) {
++        new AlertDialog.Builder(requireContext())
++                .setTitle(c.name)
++                .setMessage(R.string.nfc_access_card_delete_confirm)
++                .setNegativeButton(android.R.string.cancel, null)
++                .setPositiveButton(R.string.nfc_access_card_delete, (d, w) -> {
++                    if (c.uid.equals(currentUid())) setCurrentUid(null);
++                    mCards.remove(c);
++                    save();
++                    render();
++                })
++                .show();
++    }
++
++    /** 新增（c == null）或修改一张卡。 */
++    private void showEditDialog(Card c) {
++        final Context ctx = requireContext();
++        final LinearLayout box = new LinearLayout(ctx);
++        box.setOrientation(LinearLayout.VERTICAL);
++        box.setPadding(dp(22), dp(8), dp(22), 0);
++
++        final EditText name = new EditText(ctx);
++        name.setHint(R.string.nfc_access_card_name_hint);
++        name.setSingleLine();
++        final EditText uid = new EditText(ctx);
++        uid.setHint(R.string.nfc_access_card_uid_hint);
++        uid.setSingleLine();
++        uid.setInputType(InputType.TYPE_CLASS_TEXT
++                | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
++                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
++        uid.setTypeface(Typeface.MONOSPACE);
++        if (c != null) {
++            name.setText(c.name);
++            uid.setText(pretty(c.uid));
++        }
++        final Button read = new Button(ctx);
++        read.setText(R.string.nfc_access_card_read);
++        read.setOnClickListener(v -> startReading(uid));
++
++        box.addView(name);
++        box.addView(uid);
++        box.addView(read);
++
++        final AlertDialog dlg = new AlertDialog.Builder(ctx)
++                .setTitle(c == null ? R.string.nfc_access_card_add
++                        : R.string.nfc_access_card_rename_edit)
++                .setView(box)
++                .setNegativeButton(android.R.string.cancel, null)
++                .setPositiveButton(android.R.string.ok, null)
++                .create();
++        dlg.setOnDismissListener(d -> stopReading());
++        dlg.setOnShowListener(d -> dlg.getButton(AlertDialog.BUTTON_POSITIVE)
++                .setOnClickListener(v -> {
++                    final String hex = normalize(uid.getText().toString());
++                    if (hex == null) {
++                        uid.setError(getString(R.string.nfc_access_card_uid_invalid));
++                        return;
++                    }
++                    String n = name.getText().toString().trim();
++                    if (n.isEmpty()) n = getString(R.string.nfc_access_card_default_name);
++                    final String wasCurrent = currentUid();
++                    if (c == null) {
++                        final Card nc = new Card();
++                        nc.name = n;
++                        nc.uid = hex;
++                        nc.color = mCards.size() % COLORS.length;
++                        mCards.add(nc);
++                        // 第一张卡直接启用，省一步
++                        if (wasCurrent == null) setCurrentUid(hex);
++                    } else {
++                        final boolean active = c.uid.equals(wasCurrent);
++                        c.name = n;
++                        if (!c.uid.equals(hex)) {
++                            c.uid = hex;
++                            if (active) setCurrentUid(hex);
++                        }
++                    }
++                    save();
++                    render();
++                    dlg.dismiss();
++                }));
++        dlg.show();
++    }
++
++    // ---------------------------------------------------------------- 读实体卡
++
++    /** 用读卡模式读实体卡的卡号（NFCID / UID），填进输入框。 */
++    private void startReading(EditText target) {
++        final Activity act = getActivity();
++        final NfcAdapter nfc = NfcAdapter.getDefaultAdapter(act);
++        if (nfc == null || !nfc.isEnabled()) {
++            Toast.makeText(act, R.string.nfc_access_card_nfc_off, Toast.LENGTH_SHORT).show();
++            return;
++        }
++        nfc.enableReaderMode(act, (Tag tag) -> {
++            final byte[] id = tag.getId();
++            act.runOnUiThread(() -> {
++                stopReading();
++                final String hex = id == null ? null : normalize(HexFormat.of().formatHex(id));
++                if (hex == null) {
++                    Toast.makeText(act, R.string.nfc_access_card_read_fail,
++                            Toast.LENGTH_SHORT).show();
++                    return;
++                }
++                target.setText(pretty(hex));
++                target.setError(null);
++                Toast.makeText(act, R.string.nfc_access_card_read_ok, Toast.LENGTH_SHORT).show();
++            });
++        }, NfcAdapter.FLAG_READER_NFC_A | NfcAdapter.FLAG_READER_NFC_B
++                | NfcAdapter.FLAG_READER_NFC_F | NfcAdapter.FLAG_READER_NFC_V
++                | NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK, null);
++        mReadDialog = new AlertDialog.Builder(act)
++                .setMessage(R.string.nfc_access_card_read_prompt)
++                .setNegativeButton(android.R.string.cancel, null)
++                .setOnDismissListener(d -> stopReading())
++                .show();
++    }
++
++    private void stopReading() {
++        final Activity act = getActivity();
++        if (act != null) {
++            final NfcAdapter nfc = NfcAdapter.getDefaultAdapter(act);
++            if (nfc != null) {
++                try {
++                    nfc.disableReaderMode(act);
++                } catch (RuntimeException ignored) {
++                }
++            }
++        }
++        if (mReadDialog != null) {
++            final AlertDialog d = mReadDialog;
++            mReadDialog = null;
++            if (d.isShowing()) d.dismiss();
++        }
++    }
++
++    private int dp(int v) {
++        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
++                getResources().getDisplayMetrics());
++    }
++}
+-- 
+2.43.0
+

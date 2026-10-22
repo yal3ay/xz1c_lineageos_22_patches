@@ -1,0 +1,33 @@
+From 7fe6e6085e91dc19affd7b0cd466ac431c30d774 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Sun, 4 Oct 2026 16:11:38 +0800
+Subject: [PATCH 2/4] Document VPN resolver precedence
+
+Change-Id: I2ae80884b7cba5f9eba303d4cbf6dc4ed11bee5e
+---
+ xz1c-engine/README.md | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/xz1c-engine/README.md b/xz1c-engine/README.md
+index 3c5ff8b0..a854884b 100644
+--- a/xz1c-engine/README.md
++++ b/xz1c-engine/README.md
+@@ -7,7 +7,14 @@ standard strict private DNS hostname. Connectivity passes a project-local xz1c:
+ hint in DohParamsParcel.dohpath; this hint is consumed locally, never transmitted.
+ The parcel interface remains frozen and compatible with unmodified callers.
+ 
+-Every upstream socket inherits Android's app_mark for that network and is tagged
++VPN policy: ConnectivityService leaves VPN networks in private-DNS-off mode so
++that their advertised resolver is used inside the tunnel. The saved private DNS
++preference continues to apply to physical networks. Late hostname-bootstrap
++results cannot replace a VPN resolver. A tunnel must advertise a DNS server and
++route to it; a VPN without DNS can still trigger Android's physical-network
++selection. Per-app exclusions and independently implemented DNS remain separate.
++
++Every custom-engine upstream socket inherits Android's app_mark for that network and is tagged
+ with AID_DNS. It does not use a global default route or a hostname lookup in Go.
+ Android performs the resolver-hostname bootstrap on the corresponding network.
+ That initial hostname bootstrap may use that network's DNS. These settings do not
+-- 
+2.43.0
+

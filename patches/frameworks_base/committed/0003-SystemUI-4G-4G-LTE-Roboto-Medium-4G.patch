@@ -1,0 +1,405 @@
+From c180d191495490fcae95ebf10704e2549aa1edb0 Mon Sep 17 00:00:00 2001
+From: "joey.qu" <joey.qu@yhischina.com>
+Date: Thu, 10 Sep 2026 18:59:18 +0800
+Subject: [PATCH 3/6] =?UTF-8?q?SystemUI:=204G=20=E9=AB=98=E6=B8=85?=
+ =?UTF-8?q?=E9=80=9A=E8=AF=9D=E6=8C=87=E7=A4=BA=E6=94=B9=E4=B8=BA=204G=20?=
+ =?UTF-8?q?=E5=8F=B3=E4=BE=A7=E7=9A=84=20LTE=20=E5=AD=97=E6=A0=B7=EF=BC=88?=
+ =?UTF-8?q?Roboto=20Medium=EF=BC=8C=E4=B8=8E=204G=20=E5=90=8C=E5=AD=97?=
+ =?UTF-8?q?=E5=8F=B7=EF=BC=89=EF=BC=8C=E8=B7=9F=E9=9A=8F=E5=BC=80=E5=85=B3?=
+ =?UTF-8?q?=E6=98=BE=E9=9A=90?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change-Id: Ia1009d14782f7cdd2f241f24165f72cba2e169aa
+---
+ core/res/res/values/config.xml                |  2 -
+ core/res/res/values/symbols.xml               |  1 -
+ .../status_bar_mobile_signal_group_inner.xml  | 14 ++++
+ .../SystemUI/res/drawable/stat_sys_volte.xml  | 70 +++++------------
+ .../statusbar/phone/PhoneStatusBarPolicy.java | 77 -------------------
+ .../mobile/ui/binder/MobileIconBinder.kt      |  2 +
+ .../ui/view/ModernStatusBarMobileView.kt      | 70 +++++++++++++++++
+ 7 files changed, 106 insertions(+), 130 deletions(-)
+
+diff --git a/core/res/res/values/config.xml b/core/res/res/values/config.xml
+index 2fb5c1974..083ed040b 100644
+--- a/core/res/res/values/config.xml
++++ b/core/res/res/values/config.xml
+@@ -60,7 +60,6 @@
+         <item><xliff:g id="id">@string/status_bar_oem_satellite</xliff:g></item>
+         <item><xliff:g id="id">@string/status_bar_wifi</xliff:g></item>
+         <item><xliff:g id="id">@string/status_bar_hotspot</xliff:g></item>
+-        <item><xliff:g id="id">@string/status_bar_volte</xliff:g></item>
+         <item><xliff:g id="id">@string/status_bar_mobile</xliff:g></item>
+         <item><xliff:g id="id">@string/status_bar_airplane</xliff:g></item>
+         <item><xliff:g id="id">@string/status_bar_battery</xliff:g></item>
+@@ -95,7 +94,6 @@
+     <string translatable="false" name="status_bar_secure">secure</string>
+     <string translatable="false" name="status_bar_clock">clock</string>
+     <!-- 4G 高清通话（VoLTE）状态图标槽位 -->
+-    <string translatable="false" name="status_bar_volte">volte</string>
+     <string translatable="false" name="status_bar_mobile">mobile</string>
+     <string translatable="false" name="status_bar_vpn">vpn</string>
+     <string translatable="false" name="status_bar_ethernet">ethernet</string>
+diff --git a/core/res/res/values/symbols.xml b/core/res/res/values/symbols.xml
+index a021d4d33..f47032321 100644
+--- a/core/res/res/values/symbols.xml
++++ b/core/res/res/values/symbols.xml
+@@ -3292,7 +3292,6 @@
+   <java-symbol type="string" name="status_bar_airplane" />
+   <java-symbol type="string" name="status_bar_no_calling" />
+   <java-symbol type="string" name="status_bar_call_strength" />
+-  <java-symbol type="string" name="status_bar_volte" />
+   <java-symbol type="string" name="status_bar_mobile" />
+   <java-symbol type="string" name="status_bar_ethernet" />
+   <java-symbol type="string" name="status_bar_vpn" />
+diff --git a/packages/SystemUI/res-keyguard/layout/status_bar_mobile_signal_group_inner.xml b/packages/SystemUI/res-keyguard/layout/status_bar_mobile_signal_group_inner.xml
+index 25cadfbb0..60130912e 100644
+--- a/packages/SystemUI/res-keyguard/layout/status_bar_mobile_signal_group_inner.xml
++++ b/packages/SystemUI/res-keyguard/layout/status_bar_mobile_signal_group_inner.xml
+@@ -66,6 +66,20 @@
+                 android:adjustViewBounds="true"
+                 />
+         </FrameLayout>
++        <!-- 4G 高清通话（VoLTE）指示，紧跟在网络类型（4G）右边。
++             高度与 mobile_type 共用 status_bar_mobile_type_size(16sp)，
++             加上 stat_sys_volte 的 viewport/字高与 ic_4g_mobiledata 完全一致，
++             所以 VoLTE 和 4G 的字体、字重、字号严格相同，用户放大字体也同步。
++             可见性由 ModernStatusBarMobileView 跟随「设置 → 4G 高清通话」开关切换。 -->
++        <ImageView
++            android:id="@+id/mobile_volte"
++            android:layout_height="@dimen/status_bar_mobile_type_size"
++            android:layout_width="wrap_content"
++            android:layout_gravity="center_vertical"
++            android:layout_marginEnd="1sp"
++            android:adjustViewBounds="true"
++            android:src="@drawable/stat_sys_volte"
++            android:visibility="gone" />
+         <Space
+             android:id="@+id/mobile_roaming_space"
+             android:layout_height="match_parent"
+diff --git a/packages/SystemUI/res/drawable/stat_sys_volte.xml b/packages/SystemUI/res/drawable/stat_sys_volte.xml
+index 012ada706..a807f4f03 100644
+--- a/packages/SystemUI/res/drawable/stat_sys_volte.xml
++++ b/packages/SystemUI/res/drawable/stat_sys_volte.xml
+@@ -1,56 +1,26 @@
+ <?xml version="1.0" encoding="utf-8"?>
+-<!-- 状态栏「4G 高清通话」图标。
+-     取自 LineageOS 的 SystemUI 补丁 ic_volte.xml（Gerrit 279554，原作者 Qualcomm/
+-     The Linux Foundation），14x17dp 的纯 HD 字形，就是给状态栏这个用途画的。
+-     第一条 path 无 fillColor（不填充，仅作边界）；最后一条是零面积退化路径，均无害。
+-     不要换成 Material 的 ic_hd 徽章版 —— 2026-09-09 用户明确选了这个字形版。 -->
+-<!--Copyright (c) 2018, The Linux Foundation. All rights reserved.
+- *
+- * Redistribution and use in source and binary forms, with or without
+- * modification, are permitted provided that the following conditions are
+- * met:
+- *  * Redistributions of source code must retain the above copyright
+- *    notice, this list of conditions and the following disclaimer.
+- *  * Redistributions in binary form must reproduce the above
+- *    copyright notice, this list of conditions and the following
+- *    disclaimer in the documentation and/or other materials provided
+- *    with the distribution.
+- *  * Neither the name of The Linux Foundation nor the names of its
+- *    contributors may be used to endorse or promote products derived
+- *    from this software without specific prior written permission.
+- *
+- * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
+- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
+- * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
+- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+- * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+- * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+- * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+--->
+-
++<!-- 状态栏「4G 高清通话」指示：LTE 字样，与左边的 4G 连成「4G LTE」。
++     由 external/roboto-fonts/Roboto-Regular.ttf 在 wght=500 下取真实字形轮廓生成
++     （字重 Medium 由三项检验定案：渲染笔画宽、与屏幕 4G 的像素差、字形顶点距离）。
++     规格刻意与 ic_4g_mobiledata 一致：viewport 高 16、字高 10.02、基线 y=13.00，
++     因此和 4G 共用 status_bar_mobile_type_size(16sp) 的 ImageView 时字号严格相同，
++     用户放大字体也同步缩放。不要手改这些数字。
++     填充色写死 #FF000000 只是占位，实际由 MobileIconBinder 的 imageTintList 着色。 -->
+ <vector xmlns:android="http://schemas.android.com/apk/res/android"
+-    android:width="14dp"
+-    android:height="17dp"
+-    android:viewportWidth="14"
+-    android:viewportHeight="17">
+-
++    android:width="25.96dp"
++    android:height="16dp"
++    android:viewportWidth="25.96"
++    android:viewportHeight="16">
++    <!-- L -->
+     <path
+-        android:pathData="M 1.2 4 H 13.7 V 13.2 H 1.2 V 4 Z" />
++        android:fillColor="#FF000000"
++        android:pathData="M7.88 11.63V13H2.85V11.63ZM3.33 2.98V13H1.6V2.98Z" />
++    <!-- T -->
+     <path
+-        android:fillColor="#FFFFFF"
+-        android:strokeColor="#FFFFFF"
+-        android:strokeWidth="0.5"
+-        android:pathData="M1.9,12.6V4h0.8v3.5h3.2V4h0.8v8.6H5.9v-4H2.7v4H1.9z" />
++        android:fillColor="#FF000000"
++        android:pathData="M13.34 2.98V13H11.62V2.98ZM16.48 2.98V4.35H8.51V2.98Z" />
++    <!-- E -->
+     <path
+-        android:fillColor="#FFFFFF"
+-        android:strokeColor="#FFFFFF"
+-        android:strokeWidth="0.5"
+-        android:pathData="M8,12.6V4h2.1c0.5,0,0.8,0,1.1,0.1c0.4,0.1,0.7,0.3,0.9,0.6c0.3,0.4,0.6,0.9,0.7,1.5s0.2,1.3,0.2,2c0,0.7-0.1,1.2-0.2,1.7c-0.1,0.5-0.2,0.9-0.4,1.3S12.2,11.8,12,12s-0.4,0.3-0.7,0.4s-0.6,0.1-1,0.1H8zM8.8,11.6h1.3c0.4,0,0.7-0.1,0.9-0.2c0.2-0.1,0.4-0.3,0.5-0.4c0.2-0.3,0.3-0.6,0.4-1.1c0.1-0.5,0.2-1,0.2-1.7c0-0.9-0.1-1.6-0.3-2.1c-0.2-0.5-0.5-0.8-0.8-1C11,5.1,10.6,5,10.1,5H8.8V11.6z" />
+-    <path
+-        android:fillColor="#000000"
+-        android:pathData="M 2 9 L 1 9 L 1 9 L 2 9 Z" />
++        android:fillColor="#FF000000"
++        android:pathData="M24.36 11.63V13H19.04V11.63ZM19.53 2.98V13H17.8V2.98ZM23.66 7.17V8.51H19.04V7.17ZM24.32 2.98V4.35H19.04V2.98Z" />
+ </vector>
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java b/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java
+index e71693376..72fccf6fe 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java
+@@ -36,7 +36,6 @@ import android.media.AudioManager;
+ import android.net.ConnectivityManager;
+ import android.net.Network;
+ import android.net.NetworkCapabilities;
+-import android.database.ContentObserver;
+ import android.os.Handler;
+ import android.os.Looper;
+ import android.os.Process;
+@@ -47,12 +46,7 @@ import android.provider.Settings.Global;
+ import android.service.notification.ZenModeConfig;
+ import android.telecom.TelecomManager;
+ import android.text.format.DateFormat;
+-import android.telephony.AccessNetworkConstants;
+ import android.telephony.SubscriptionManager;
+-import android.telephony.ims.ImsException;
+-import android.telephony.ims.ImsMmTelManager;
+-import android.telephony.ims.ImsReasonInfo;
+-import android.telephony.ims.feature.MmTelFeature;
+ import android.util.Log;
+ import android.view.View;
+ 
+@@ -140,8 +134,6 @@ public class PhoneStatusBarPolicy
+     /** 4G 高清通话（VoLTE）状态图标。
+      *  槽位已正式登记在 core/res 的 config_statusBarIcons 里，位置紧挨 status_bar_mobile 之前 ——
+      *  该数组的顺序就是状态栏从左到右的顺序，所以图标显示在信号格左侧。 */
+-    private final String mSlotVolte;
+-    private boolean mVolteAvailable;
+     private final String mSlotManagedProfile;
+     private final String mSlotRotate;
+     private final String mSlotHeadset;
+@@ -271,7 +263,6 @@ public class PhoneStatusBarPolicy
+         mSlotMute = resources.getString(com.android.internal.R.string.status_bar_mute);
+         mSlotVibrate = resources.getString(com.android.internal.R.string.status_bar_volume);
+         mSlotAlarmClock = resources.getString(com.android.internal.R.string.status_bar_alarm_clock);
+-        mSlotVolte = resources.getString(com.android.internal.R.string.status_bar_volte);
+         mSlotManagedProfile = resources.getString(
+                 com.android.internal.R.string.status_bar_managed_profile);
+         mSlotRotate = resources.getString(com.android.internal.R.string.status_bar_rotate);
+@@ -323,9 +314,6 @@ public class PhoneStatusBarPolicy
+         mIconController.setIconVisibility(mSlotAlarmClock, false);
+ 
+         // 4G 高清通话（VoLTE）：默认隐藏，IMS 在 WWAN 上注册成功后才显示
+-        mIconController.setIcon(mSlotVolte, R.drawable.stat_sys_volte, null);
+-        mIconController.setIconVisibility(mSlotVolte, false);
+-        registerVolteListeners();
+ 
+         // zen
+         mIconController.setIcon(mSlotZen, R.drawable.stat_sys_dnd, null);
+@@ -1089,69 +1077,4 @@ public class PhoneStatusBarPolicy
+ 
+         mIconController.setIconVisibility(mSlotConnectedDisplay, visible);
+     }
+-
+-    // ==================== 4G 高清通话（VoLTE）状态图标 ====================
+-    //
+-    // 判据就是「设置 → 4G 高清通话」这个开关本身（isAdvancedCallingSettingEnabled）：
+-    // 开关打开就显示 HD，关闭就隐藏 —— 用户 2026-09-10 明确要求的绑定关系。
+-    //
+-    // 走过的两条弯路，别再改回去：
+-    //   * IMS 注册状态（RegistrationCallback）：关掉开关后依然是 true
+-    //     （IMS 还要为短信等业务保持注册），图标不会消失。
+-    //   * MmTel 语音能力（CAPABILITY_TYPE_VOICE）：还取决于网络实际协商结果，
+-    //     开关开了但没注册上时不显示，跟「跟着开关走」的直觉不符。
+-    //
+-    // 开关的变化通过 SubscriptionManager.ADVANCED_CALLING_ENABLED_CONTENT_URI 观察 ——
+-    // 这正是 setAdvancedCallingSettingEnabled() 真正写入的那张表。
+-
+-    private final ContentObserver mVolteSettingObserver =
+-            new ContentObserver(new Handler(Looper.getMainLooper())) {
+-                @Override
+-                public void onChange(boolean selfChange) {
+-                    mUiBgExecutor.execute(() -> refreshVolteIcon());
+-                }
+-            };
+-
+-    private void registerVolteListeners() {
+-        SubscriptionManager sm = mContext.getSystemService(SubscriptionManager.class);
+-        if (sm != null) {
+-            // 换卡 / 默认语音卡变化时重新读一次
+-            sm.addOnSubscriptionsChangedListener(mUiBgExecutor,
+-                    new SubscriptionManager.OnSubscriptionsChangedListener() {
+-                        @Override
+-                        public void onSubscriptionsChanged() {
+-                            refreshVolteIcon();
+-                        }
+-                    });
+-        }
+-        mContext.getContentResolver().registerContentObserver(
+-                SubscriptionManager.ADVANCED_CALLING_ENABLED_CONTENT_URI,
+-                true /* notifyForDescendants */, mVolteSettingObserver);
+-        mUiBgExecutor.execute(this::refreshVolteIcon);
+-    }
+-
+-    /** 读一次「4G 高清通话」开关并同步图标显隐。会走 binder，必须在后台线程调用。 */
+-    private void refreshVolteIcon() {
+-        boolean enabled = false;
+-        final int subId = SubscriptionManager.getDefaultVoiceSubscriptionId();
+-        if (SubscriptionManager.isValidSubscriptionId(subId)) {
+-            try {
+-                enabled = ImsMmTelManager.createForSubscriptionId(subId)
+-                        .isAdvancedCallingSettingEnabled();
+-            } catch (RuntimeException e) {
+-                // 机器不支持 IMS，或此刻拿不到 —— 图标保持隐藏即可
+-                Log.w(TAG, "isAdvancedCallingSettingEnabled failed for subId=" + subId, e);
+-            }
+-        }
+-        setVolteAvailable(enabled);
+-    }
+-
+-    private void setVolteAvailable(boolean available) {
+-        if (mVolteAvailable == available) {
+-            return;
+-        }
+-        mVolteAvailable = available;
+-        mMainExecutor.execute(() -> mIconController.setIconVisibility(mSlotVolte, available));
+-    }
+-
+ }
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/binder/MobileIconBinder.kt b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/binder/MobileIconBinder.kt
+index 31d349eb4..5dd653837 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/binder/MobileIconBinder.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/binder/MobileIconBinder.kt
+@@ -72,6 +72,7 @@ object MobileIconBinder {
+         val networkTypeContainer = view.requireViewById<FrameLayout>(R.id.mobile_type_container)
+         val iconView = view.requireViewById<ImageView>(R.id.mobile_signal)
+         val mobileDrawable = SignalDrawable(view.context)
++        val volteView = view.requireViewById<ImageView>(R.id.mobile_volte)
+         val roamingView = view.requireViewById<ImageView>(R.id.mobile_roaming)
+         val roamingSpace = view.requireViewById<Space>(R.id.mobile_roaming_space)
+         val dotView = view.requireViewById<StatusBarIconView>(R.id.status_bar_dot)
+@@ -248,6 +249,7 @@ object MobileIconBinder {
+                             }
+ 
+                             roamingView.imageTintList = tint
++                            volteView.imageTintList = tint
+                             activityIn.imageTintList = tint
+                             activityOut.imageTintList = tint
+                             dotView.setDecorColor(colors.tint)
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/view/ModernStatusBarMobileView.kt b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/view/ModernStatusBarMobileView.kt
+index fd5ab135a..e6bec1926 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/view/ModernStatusBarMobileView.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/view/ModernStatusBarMobileView.kt
+@@ -17,9 +17,17 @@
+ package com.android.systemui.statusbar.pipeline.mobile.ui.view
+ 
+ import android.content.Context
++import android.database.ContentObserver
++import android.os.Handler
++import android.os.Looper
++import android.telephony.SubscriptionManager
++import android.telephony.ims.ImsMmTelManager
+ import android.util.AttributeSet
++import android.util.Log
++import android.view.View
+ import android.view.LayoutInflater
+ import android.widget.ImageView
++import java.util.concurrent.Executors
+ import com.android.settingslib.flags.Flags.newStatusBarIcons
+ import com.android.systemui.res.R
+ import com.android.systemui.statusbar.StatusBarIconView.getVisibleStateString
+@@ -35,6 +43,62 @@ class ModernStatusBarMobileView(
+ 
+     var subId: Int = -1
+ 
++    // ==================== 4G 高清通话（VoLTE）指示 ====================
++    //
++    // 在 4G 右边显示 LTE 字样，连起来读就是「4G LTE」（AOSP 自带的
++    // ic_4g_lte_mobiledata 就是这个组合），显隐跟随「设置 → 4G 高清通话」开关。
++    //
++    // 判据用开关本身（isAdvancedCallingSettingEnabled），不是 IMS 注册状态：
++    // 关掉开关后 IMS 还要为短信等业务保持注册，注册状态依然是 true，字样不会消失。
++    //
++    // 为什么在 view 里自己监听、不走 view model：Android 15 的新 mobile 管线
++    // （MobileIconInteractor / MobileIconViewModel）里没有任何 IMS/VoLTE 数据流，
++    // 硬塞要一路改到 repository 层。开关变化通过
++    // SubscriptionManager.ADVANCED_CALLING_ENABLED_CONTENT_URI 观察 ——
++    // 这就是 setAdvancedCallingSettingEnabled() 真正写入的那张表，所以是即时的。
++
++    private val volteObserver =
++        object : ContentObserver(Handler(Looper.getMainLooper())) {
++            override fun onChange(selfChange: Boolean) {
++                refreshVolte()
++            }
++        }
++
++    private fun refreshVolte() {
++        val sub = subId
++        volteBgExecutor.execute {
++            val enabled =
++                try {
++                    SubscriptionManager.isValidSubscriptionId(sub) &&
++                        ImsMmTelManager.createForSubscriptionId(sub)
++                            .isAdvancedCallingSettingEnabled
++                } catch (e: RuntimeException) {
++                    // 机器不支持 IMS 或此刻取不到 —— 不显示即可
++                    Log.w(TAG, "读取 4G 高清通话开关失败 subId=$sub", e)
++                    false
++                }
++            post {
++                findViewById<ImageView>(R.id.mobile_volte)?.visibility =
++                    if (enabled) View.VISIBLE else View.GONE
++            }
++        }
++    }
++
++    override fun onAttachedToWindow() {
++        super.onAttachedToWindow()
++        context.contentResolver.registerContentObserver(
++            SubscriptionManager.ADVANCED_CALLING_ENABLED_CONTENT_URI,
++            /* notifyForDescendants = */ true,
++            volteObserver,
++        )
++        refreshVolte()
++    }
++
++    override fun onDetachedFromWindow() {
++        context.contentResolver.unregisterContentObserver(volteObserver)
++        super.onDetachedFromWindow()
++    }
++
+     override fun toString(): String {
+         return "ModernStatusBarMobileView(" +
+             "slot='$slot', " +
+@@ -46,6 +110,12 @@ class ModernStatusBarMobileView(
+ 
+     companion object {
+ 
++        private const val TAG = "ModernStatusBarMobileView"
++
++        // 状态栏、锁屏、QS 头部会各自持有一个实例，读开关是 binder 调用，
++        // 共用一条后台线程，别每个 view 各起一条。
++        private val volteBgExecutor = Executors.newSingleThreadExecutor()
++
+         /**
+          * Inflates a new instance of [ModernStatusBarMobileView], binds it to [viewModel], and
+          * returns it.
+-- 
+2.43.0
+
