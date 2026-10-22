@@ -1,5 +1,5 @@
 From 9ee3504c0c43f47a06f5509e226b20d394587d9b Mon Sep 17 00:00:00 2001
-From: "joey.qu" <joey.qu@yhischina.com>
+From: "joey.qu" <yal3ay@users.noreply.github.com>
 Date: Thu, 8 Oct 2026 15:26:22 +0800
 Subject: [PATCH 5/6] xz1c: snapshot of local ROM work as of 2026-10-08
 
@@ -211,7 +211,7 @@ index 8ff65540c..91339bcc1 100644
 -     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 -     See the License for the specific language governing permissions and
 -     limitations under the License.
-+     参考件留存于 /home/joey/xz1c-sony-ref/。不要手改这些数字。
++     参考件留存于 ~/xz1c-sony-ref/。不要手改这些数字。
  -->
  <vector xmlns:android="http://schemas.android.com/apk/res/android"
 -        android:width="18dp"
@@ -270,7 +270,7 @@ index db31b9dd0..40c9a589a 100644
 +         未点亮 -> #FFFFFFFF + fillAlpha="0.3"
 +     实际颜色由 SystemUI 的 imageTintList 在运行时决定，跟随主题变色。
 +
-+     参考件留存于 /home/joey/xz1c-sony-ref/。不要手改这些数字。
++     参考件留存于 ~/xz1c-sony-ref/。不要手改这些数字。
 +-->
  <vector xmlns:android="http://schemas.android.com/apk/res/android"
 -        android:width="17dp"
@@ -344,7 +344,7 @@ index e170f1dad..297173c09 100644
 -     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 -     See the License for the specific language governing permissions and
 -     limitations under the License.
-+     参考件留存于 /home/joey/xz1c-sony-ref/。不要手改这些数字。
++     参考件留存于 ~/xz1c-sony-ref/。不要手改这些数字。
  -->
  <vector xmlns:android="http://schemas.android.com/apk/res/android"
 -        android:width="18dp"
@@ -401,7 +401,7 @@ index a4d6a5c00..10b0ec0f8 100644
 +         未点亮 -> #FFFFFFFF + fillAlpha="0.3"
 +     实际颜色由 SystemUI 的 imageTintList 在运行时决定，跟随主题变色。
 +
-+     参考件留存于 /home/joey/xz1c-sony-ref/。不要手改这些数字。
++     参考件留存于 ~/xz1c-sony-ref/。不要手改这些数字。
 +-->
  <vector xmlns:android="http://schemas.android.com/apk/res/android"
 -        android:width="17dp"
@@ -475,7 +475,7 @@ index fc62267ad..899881ac5 100644
 -     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 -     See the License for the specific language governing permissions and
 -     limitations under the License.
-+     参考件留存于 /home/joey/xz1c-sony-ref/。不要手改这些数字。
++     参考件留存于 ~/xz1c-sony-ref/。不要手改这些数字。
  -->
  <vector xmlns:android="http://schemas.android.com/apk/res/android"
 -        android:width="18dp"
@@ -530,7 +530,7 @@ index 65f40eff1..3e73fa3ed 100644
 +         未点亮 -> #FFFFFFFF + fillAlpha="0.3"
 +     实际颜色由 SystemUI 的 imageTintList 在运行时决定，跟随主题变色。
 +
-+     参考件留存于 /home/joey/xz1c-sony-ref/。不要手改这些数字。
++     参考件留存于 ~/xz1c-sony-ref/。不要手改这些数字。
 +-->
  <vector xmlns:android="http://schemas.android.com/apk/res/android"
 -        android:width="17dp"
@@ -603,7 +603,7 @@ index 9079daf92..d80066ccb 100644
 -     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 -     See the License for the specific language governing permissions and
 -     limitations under the License.
-+     参考件留存于 /home/joey/xz1c-sony-ref/。不要手改这些数字。
++     参考件留存于 ~/xz1c-sony-ref/。不要手改这些数字。
  -->
  <vector xmlns:android="http://schemas.android.com/apk/res/android"
 -        android:width="18dp"
@@ -656,7 +656,7 @@ index 940781bbb..2d08b8e38 100644
 +         未点亮 -> #FFFFFFFF + fillAlpha="0.3"
 +     实际颜色由 SystemUI 的 imageTintList 在运行时决定，跟随主题变色。
 +
-+     参考件留存于 /home/joey/xz1c-sony-ref/。不要手改这些数字。
++     参考件留存于 ~/xz1c-sony-ref/。不要手改这些数字。
 +-->
  <vector xmlns:android="http://schemas.android.com/apk/res/android"
 -        android:width="17dp"
@@ -727,7 +727,7 @@ index 6185e4a83..6ab92eb63 100644
 -     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 -     See the License for the specific language governing permissions and
 -     limitations under the License.
-+     参考件留存于 /home/joey/xz1c-sony-ref/。不要手改这些数字。
++     参考件留存于 ~/xz1c-sony-ref/。不要手改这些数字。
  -->
  <vector xmlns:android="http://schemas.android.com/apk/res/android"
 -        android:width="18dp"
@@ -778,7 +778,7 @@ index 715aaa098..5475d67eb 100644
 +         未点亮 -> #FFFFFFFF + fillAlpha="0.3"
 +     实际颜色由 SystemUI 的 imageTintList 在运行时决定，跟随主题变色。
 +
-+     参考件留存于 /home/joey/xz1c-sony-ref/。不要手改这些数字。
++     参考件留存于 ~/xz1c-sony-ref/。不要手改这些数字。
 +-->
  <vector xmlns:android="http://schemas.android.com/apk/res/android"
 -        android:width="17dp"
@@ -1148,7 +1148,7 @@ index a807f4f03..4f9550e62 100644
 +     16/15.75=1.016，因此与索尼自己相对 4G(16dp) 的比例基本一致。
 +     fillColor 保留原版 #ffffffff，实际由 MobileIconBinder 的
 +     imageTintList 着色，跟随主题变色不受影响。
-+     参考件留存于 /home/joey/xz1c-sony-ref/。 -->
++     参考件留存于 ~/xz1c-sony-ref/。 -->
  <vector xmlns:android="http://schemas.android.com/apk/res/android"
 -    android:width="25.96dp"
 -    android:height="16dp"

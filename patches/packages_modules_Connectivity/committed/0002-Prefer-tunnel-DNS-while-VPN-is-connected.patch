@@ -1,5 +1,5 @@
 From 3a1c932139c5c19fd5443407ef169f93b34ac6f8 Mon Sep 17 00:00:00 2001
-From: "joey.qu" <joey.qu@yhischina.com>
+From: "joey.qu" <yal3ay@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 16:11:37 +0800
 Subject: [PATCH 2/2] Prefer tunnel DNS while VPN is connected
 

@@ -1,5 +1,5 @@
 From bc1691ac703fa8273c8f2bb225fe1804041aff7f Mon Sep 17 00:00:00 2001
-From: "joey.qu" <joey.qu@yhischina.com>
+From: "joey.qu" <yal3ay@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 15:41:07 +0800
 Subject: [PATCH 1/4] Add configurable strict encrypted DNS transports
 
@@ -2289,7 +2289,7 @@ index 00000000..3c5ff8b0
 +
 +Host tests: go test -mod=vendor -race ./...
 +Live AliDNS tests: XZ1C_DNS_LIVE=1 go test -mod=vendor -v -run TestAliDNSLive ./...
-+Project modules: /home/joey/build.sh codex-dns "Settings com.android.resolv com.android.tethering"
++Project modules: ~/build.sh codex-dns "Settings com.android.resolv com.android.tethering"
 +
 +The legacy resolver statistics schema has no distinct DoQ protocol enum; custom
 +engine events use its encrypted transport envelope. dumpsys dnsresolver identifies

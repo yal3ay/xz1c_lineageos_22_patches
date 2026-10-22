@@ -1,5 +1,5 @@
 From 28b7c4d2852efa58f2cfe8f4c837d59af79d9651 Mon Sep 17 00:00:00 2001
-From: "joey.qu" <joey.qu@yhischina.com>
+From: "joey.qu" <yal3ay@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 08:07:04 +0800
 Subject: [PATCH] Release setup status bar restrictions when user setup
  completes

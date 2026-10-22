@@ -1,0 +1,12 @@
+/home/joey/rom-publish/repos/xz1c_lineageos_22_patches/patches/packages_modules_DnsResolver//committed/0001-Add-configurable-strict-encrypted-DNS-transports.patch:4271: trailing whitespace.
+quic-go is developed with AI assistance, and we welcome responsible use of AI tools. 
+/home/joey/rom-publish/repos/xz1c_lineageos_22_patches/patches/packages_modules_DnsResolver//committed/0001-Add-configurable-strict-encrypted-DNS-transports.patch:16813: space before tab in indent.
+		   		                    | "GET"                    ; Section 9.3
+/home/joey/rom-publish/repos/xz1c_lineageos_22_patches/patches/packages_modules_DnsResolver//committed/0001-Add-configurable-strict-encrypted-DNS-transports.patch:16814: space before tab in indent.
+		   		                    | "HEAD"                   ; Section 9.4
+/home/joey/rom-publish/repos/xz1c_lineageos_22_patches/patches/packages_modules_DnsResolver//committed/0001-Add-configurable-strict-encrypted-DNS-transports.patch:16815: space before tab in indent.
+		   		                    | "POST"                   ; Section 9.5
+/home/joey/rom-publish/repos/xz1c_lineageos_22_patches/patches/packages_modules_DnsResolver//committed/0001-Add-configurable-strict-encrypted-DNS-transports.patch:16816: space before tab in indent.
+		   		                    | "PUT"                    ; Section 9.6
+warning: squelched 9 whitespace errors
+warning: 14 lines add whitespace errors.

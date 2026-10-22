@@ -1,5 +1,5 @@
 From cdee5ce96b49babb398baaa3b11a3c7eb00da89b Mon Sep 17 00:00:00 2001
-From: "joey.qu" <joey.qu@yhischina.com>
+From: "joey.qu" <yal3ay@users.noreply.github.com>
 Date: Thu, 15 Oct 2026 15:11:45 +0800
 Subject: [PATCH 6/6] SystemUI: render custom vector drawables for lock screen
  weather indicators

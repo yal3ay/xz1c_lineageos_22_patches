@@ -1,5 +1,5 @@
 From ebf17df617754b30fbcaee1e5f49510e8a7e2e63 Mon Sep 17 00:00:00 2001
-From: "joey.qu" <joey.qu@yhischina.com>
+From: "joey.qu" <yal3ay@users.noreply.github.com>
 Date: Fri, 9 Oct 2026 14:02:22 +0800
 Subject: [PATCH] Updater: download source choice (GitHub + mirrors) with speed
  test

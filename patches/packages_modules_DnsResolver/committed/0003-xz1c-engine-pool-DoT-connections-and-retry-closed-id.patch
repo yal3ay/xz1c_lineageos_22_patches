@@ -1,5 +1,5 @@
 From d2be8fce5c4ba6aad361e3889419775d95991bb2 Mon Sep 17 00:00:00 2001
-From: "joey.qu" <joey.qu@yhischina.com>
+From: "joey.qu" <yal3ay@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 20:08:51 +0800
 Subject: [PATCH 3/4] xz1c-engine: pool DoT connections and retry closed idle
  ones

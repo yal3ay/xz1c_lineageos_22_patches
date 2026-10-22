@@ -1,5 +1,5 @@
 From f161e924f09ba838135627421011c2114746b51e Mon Sep 17 00:00:00 2001
-From: "joey.qu" <joey.qu@yhischina.com>
+From: "joey.qu" <yal3ay@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 09:23:17 +0800
 Subject: [PATCH 4/4] xz1c-engine: redial idle or silently dead DoQ connections
 

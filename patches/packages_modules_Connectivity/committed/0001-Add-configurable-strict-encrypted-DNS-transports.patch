@@ -1,5 +1,5 @@
 From 5551a3787b233c8668098ef5fac46976e2d1e0ac Mon Sep 17 00:00:00 2001
-From: "joey.qu" <joey.qu@yhischina.com>
+From: "joey.qu" <yal3ay@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 15:40:53 +0800
 Subject: [PATCH 1/2] Add configurable strict encrypted DNS transports
 
